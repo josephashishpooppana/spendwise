@@ -54,6 +54,10 @@ jobs:
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+            echo "Release keystore decoded successfully."
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set."
+            echo "Add repository secrets, then re-run this workflow to print the release SHA-1."
           fi
 
       - name: Print release SHA-1 (for Google OAuth)
@@ -62,9 +66,19 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          if [ -f android/app/release.keystore ]; then
-            keytool -list -v -keystore android/app/release.keystore -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" | grep SHA1
+          if [ ! -f android/app/release.keystore ]; then
+            echo "=== SHA-1 not available ==="
+            echo "Set these GitHub repository secrets, then re-run:"
+            echo "  ANDROID_KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD"
+            exit 0
           fi
+          if [ -z "$KEY_ALIAS" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::KEY_ALIAS and KEYSTORE_PASSWORD secrets are required."
+            exit 1
+          fi
+          echo "=== Copy this SHA-1 into Google Auth Platform > Clients > Android ==="
+          keytool -list -v -keystore android/app/release.keystore -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" | grep -E "SHA1:|SHA-1:"
+          echo "=== End SHA-1 ==="
 
       - name: Configure release signing
         working-directory: ./mobile
