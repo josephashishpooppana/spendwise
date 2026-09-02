@@ -236,6 +236,37 @@ class SheetsSyncService {
         .toList();
   }
 
+  /// Reads large sheets in row chunks to avoid mobile network timeouts.
+  Future<List<List<Object?>>> readValuesInRowChunks({
+    required String spreadsheetId,
+    required String sheetTitle,
+    required String rangeEndColumn,
+    int startRow = 1,
+    int chunkSize = 500,
+  }) async {
+    final allRows = <List<Object?>>[];
+    var rowStart = startRow;
+
+    while (true) {
+      final rowEnd = rowStart + chunkSize - 1;
+      final range = formatSheetRange(
+        sheetTitle,
+        'A$rowStart:$rangeEndColumn$rowEnd',
+      );
+      final chunk = await readValues(
+        spreadsheetId: spreadsheetId,
+        range: range,
+      );
+      if (chunk.isEmpty) break;
+
+      allRows.addAll(chunk);
+      if (chunk.length < chunkSize) break;
+      rowStart += chunkSize;
+    }
+
+    return allRows;
+  }
+
   Future<int> resolveSheetId({
     required String spreadsheetId,
     required String gid,

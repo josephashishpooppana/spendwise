@@ -34,7 +34,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 Expanded(
                   child: TextField(
                     decoration: const InputDecoration(
-                      hintText: 'Search...',
+                      hintText: 'Search description, category, notes…',
                       prefixIcon: Icon(Icons.search),
                     ),
                     onChanged: (v) => setState(() => _search = v),
@@ -82,19 +82,39 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   if (_search.isNotEmpty) {
                     final q = _search.toLowerCase();
                     return t.description.toLowerCase().contains(q) ||
-                        t.category.toLowerCase().contains(q);
+                        t.category.toLowerCase().contains(q) ||
+                        (t.notes?.toLowerCase().contains(q) ?? false);
                   }
                   return true;
                 }).toList();
 
                 if (filtered.isEmpty) {
-                  return const Center(child: Text('No transactions found'));
+                  return Center(
+                    child: Text(
+                      _search.isNotEmpty
+                          ? 'No transactions match "$_search"'
+                          : 'No transactions found',
+                    ),
+                  );
                 }
 
-                return ListView.builder(
-                  itemCount: filtered.length,
-                  itemBuilder: (context, index) {
-                    final t = filtered[index];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(
+                        _search.isNotEmpty
+                            ? '${filtered.length} of ${txns.length} transactions'
+                            : '${txns.length} transactions',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final t = filtered[index];
                     final split = splitsByTxn[t.id];
                     var outstanding = 0.0;
                     if (split != null) {
@@ -168,7 +188,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       ),
                       onTap: () => context.push('/transactions/${t.id}'),
                     );
-                  },
+                        },
+                      ),
+                    ),
+                  ],
                 );
               },
             ),

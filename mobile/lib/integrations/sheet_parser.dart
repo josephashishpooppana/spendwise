@@ -24,10 +24,17 @@ class ParsedSheetTransaction {
   final SheetImportMetadata metadata;
 
   String get importId {
-    if (metadata.transactionId.isNotEmpty) {
-      return metadata.transactionId;
+    final metaId = metadata.transactionId.trim();
+    if (metaId.isNotEmpty && _looksLikeUuid(metaId)) {
+      return metaId;
     }
     return 'sheet-$sheetRowNumber-$columnKey-${amount.toStringAsFixed(2)}';
+  }
+
+  static bool _looksLikeUuid(String value) {
+    return RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    ).hasMatch(value);
   }
 }
 
@@ -536,6 +543,10 @@ class SheetImportResult {
     this.skipped = 0,
     this.unmatchedSources = const {},
     this.sourcesCreated = 0,
+    this.sheetRowsRead = 0,
+    this.parsedCount = 0,
+    this.minImportedSheetRow,
+    this.maxImportedSheetRow,
   });
 
   final bool success;
@@ -544,4 +555,8 @@ class SheetImportResult {
   final int skipped;
   final Set<String> unmatchedSources;
   final int sourcesCreated;
+  final int sheetRowsRead;
+  final int parsedCount;
+  final int? minImportedSheetRow;
+  final int? maxImportedSheetRow;
 }

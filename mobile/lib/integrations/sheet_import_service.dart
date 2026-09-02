@@ -50,9 +50,12 @@ class SheetImportService {
       );
       final fullRange = formatSheetRange(resolvedTitle, 'A1:$rangeEnd');
 
-      final allRows = await sheets.readValues(
+      final allRows = await sheets.readValuesInRowChunks(
         spreadsheetId: spreadsheetId,
-        range: fullRange,
+        sheetTitle: resolvedTitle,
+        rangeEndColumn: rangeEnd,
+        startRow: 1,
+        chunkSize: 500,
       );
 
       List<Object?> headerRow = const [];
@@ -66,10 +69,11 @@ class SheetImportService {
         rows = allRows;
       }
 
+      final sheetRowsRead = rows.length;
       if (rows.isEmpty) {
         return SheetImportResult(
           success: false,
-          message: 'No data rows found in $resolvedTitle. '
+          message: 'No data rows found in $resolvedTitle ($fullRange). '
               'Check that the sheet has data from row 3 and your account has access.',
         );
       }
@@ -121,6 +125,9 @@ class SheetImportService {
       final unmatched = <String>{};
       var imported = 0;
       var skipped = 0;
+      int? minImportedSheetRow;
+      int? maxImportedSheetRow;
+      final toInsert = <TransactionModel>[];
 
       for (final entry in parsed) {
         if (!replaceExisting && await db.transactionExists(entry.importId)) {
@@ -143,7 +150,7 @@ class SheetImportService {
             ? entry.metadata.notes
             : 'Imported from sheet row ${entry.sheetRowNumber}';
 
-        await db.insertTransaction(
+        toInsert.add(
           TransactionModel(
             id: entry.importId,
             type: entry.type,
@@ -163,7 +170,19 @@ class SheetImportService {
 
         _registerImported(entry, source: source);
         imported++;
+        minImportedSheetRow = minImportedSheetRow == null
+            ? entry.sheetRowNumber
+            : minImportedSheetRow < entry.sheetRowNumber
+                ? minImportedSheetRow
+                : entry.sheetRowNumber;
+        maxImportedSheetRow = maxImportedSheetRow == null
+            ? entry.sheetRowNumber
+            : maxImportedSheetRow > entry.sheetRowNumber
+                ? maxImportedSheetRow
+                : entry.sheetRowNumber;
       }
+
+      await db.insertTransactionsBatch(toInsert);
 
       var balanceNote = '';
       if (replaceExisting) {
@@ -179,8 +198,18 @@ class SheetImportService {
       await registry.save();
 
       var message =
-          'Imported $imported transaction(s) from Google Sheet (${parsed.length} parsed, $skipped skipped). '
-          'Rows with empty description were ignored.';
+          'Imported $imported transaction(s) from Google Sheet (${parsed.length} parsed, $skipped skipped).\n'
+          'Read $sheetRowsRead sheet data row(s) (API rows ${rows.length + 2} incl. headers).';
+      if (minImportedSheetRow != null && maxImportedSheetRow != null) {
+        message +=
+            '\nImported sheet rows: $minImportedSheetRow–$maxImportedSheetRow.';
+      }
+      if (sheetRowsRead > 0 && minImportedSheetRow != null && minImportedSheetRow > 3) {
+        message +=
+            '\nNote: No transactions parsed before sheet row ${minImportedSheetRow - 1}. '
+            'Check dates/descriptions/amounts on earlier rows in Sheet1.';
+      }
+      message += '\nRows with empty description were ignored.';
       if (createdSources.isNotEmpty) {
         message +=
             '\nAdded ${createdSources.length} account(s) from sheet headers: ${createdSources.join(', ')}.';
@@ -200,6 +229,10 @@ class SheetImportService {
         skipped: skipped,
         unmatchedSources: unmatched,
         sourcesCreated: createdSources.length,
+        sheetRowsRead: sheetRowsRead,
+        parsedCount: parsed.length,
+        minImportedSheetRow: minImportedSheetRow,
+        maxImportedSheetRow: maxImportedSheetRow,
       );
     } catch (e) {
       return SheetImportResult(

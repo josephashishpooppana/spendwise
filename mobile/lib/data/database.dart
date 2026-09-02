@@ -448,6 +448,21 @@ class AppDatabase {
     );
   }
 
+  Future<void> insertTransactionsBatch(List<TransactionModel> txns) async {
+    if (txns.isEmpty) return;
+    await _db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final t in txns) {
+        batch.insert(
+          'transactions',
+          t.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
   Future<void> updateTransaction(TransactionModel txn) async {
     await _db.update(
       'transactions',

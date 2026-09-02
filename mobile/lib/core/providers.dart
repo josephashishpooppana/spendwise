@@ -41,7 +41,7 @@ final paymentAppSourceLinksProvider =
 
 final transactionsProvider = FutureProvider<List<TransactionModel>>((ref) async {
   final db = await ref.watch(databaseProvider.future);
-  return db.getTransactions(limit: 200);
+  return db.getTransactions();
 });
 
 final contactsProvider = FutureProvider<List<ContactModel>>((ref) async {

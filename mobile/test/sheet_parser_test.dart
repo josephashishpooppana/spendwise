@@ -199,6 +199,22 @@ void main() {
       expect(charge.first.amount, 500);
     });
 
+    test('importId ignores non-uuid metadata transaction ids', () {
+      final row = List<Object?>.filled(45, '');
+      row[1] = 45293.0;
+      row[2] = 'Bus';
+      row[4] = 40.0;
+      row[26] = 'Saturday';
+
+      final parsed = SheetParser.parseRow(
+        row,
+        sheetRowNumber: 6,
+        mappings: mappings,
+        metadataStartColumnIndex: metadataStart,
+      );
+      expect(parsed.first.importId, 'sheet-6-E-40.00');
+    });
+
     test('mappingsFromSheetHeaders finds bank and credit card columns', () {
       final header = List<Object?>.filled(30, '');
       header[3] = 'Kotak Bank';
