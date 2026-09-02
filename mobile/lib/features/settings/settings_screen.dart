@@ -191,7 +191,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             'Checklist:\n'
             '1. Google Cloud Android client package: com.spendwise.mobile\n'
             '2. SHA-1 from Build APK workflow matches your keystore\n'
-            '3. GitHub secret GOOGLE_WEB_CLIENT_ID is set and APK rebuilt\n'
+            '3. GOOGLE_WEB_CLIENT_ID is set in mobile/.env or GitHub secret and APK rebuilt\n'
             '4. Your Gmail is a test user on OAuth consent screen\n\n'
             'Details: docs/mobile/google-setup.md\n'
             'Raw error: $e';

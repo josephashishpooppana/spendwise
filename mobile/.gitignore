@@ -19,3 +19,6 @@ android/app/release.keystore
 
 # Coverage
 coverage/
+
+# Google OAuth credential downloads (never commit)
+client_secret*.json

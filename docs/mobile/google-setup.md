@@ -54,13 +54,27 @@ You need **two** OAuth clients in [Google Auth Platform → Clients](https://con
 1. **Create client** → Application type: **Web application**
 2. Name: `SpendWise Web`
 3. Copy the **Client ID** (ends with `.apps.googleusercontent.com`)
-4. Add GitHub repository secret:
+4. Configure using **either** method:
+
+**Option A — `mobile/.env` (default in this repo)**
+
+Edit `mobile/.env`:
+
+```env
+GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+```
+
+This file is committed so **Build APK** picks it up automatically. Do not commit `client_secret*.json` files from Google Cloud.
+
+**Option B — GitHub Actions secret**
 
 | Secret | Value |
 |---|---|
 | `GOOGLE_WEB_CLIENT_ID` | Web client ID from step 3 |
 
-Re-run **Build APK** after adding this secret so the app receives the Web client ID at compile time.
+Or paste the full `.env` file contents into secret `MOBILE_ENV`.
+
+Re-run **Build APK** after configuring so the app receives the Web client ID at compile time.
 
 ## 5. Build and get APK
 

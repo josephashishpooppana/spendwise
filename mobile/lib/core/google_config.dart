@@ -1,7 +1,7 @@
 /// Google OAuth configuration baked in at build time via `--dart-define`.
 ///
-/// Build APK workflow passes:
-///   --dart-define=GOOGLE_WEB_CLIENT_ID=xxxx.apps.googleusercontent.com
+/// Local builds: set `GOOGLE_WEB_CLIENT_ID` in `mobile/.env`, then run
+/// `bash scripts/load-dart-defines.sh` (or use the Build APK workflow).
 class GoogleConfig {
   GoogleConfig._();
 

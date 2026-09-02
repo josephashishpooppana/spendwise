@@ -101,18 +101,34 @@ jobs:
             bash scripts/configure-android-signing.sh
           fi
 
-      - name: Build APK
+      - name: Prepare mobile/.env
         working-directory: ./mobile
         env:
+          MOBILE_ENV: ${{ secrets.MOBILE_ENV }}
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
-          DART_DEFINES=""
-          if [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
-            DART_DEFINES="--dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID"
+          if [ -n "$MOBILE_ENV" ]; then
+            printf '%s\n' "$MOBILE_ENV" > .env
+            echo "Wrote mobile/.env from MOBILE_ENV secret."
+          elif [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
+            printf 'GOOGLE_WEB_CLIENT_ID=%s\n' "$GOOGLE_WEB_CLIENT_ID" > .env
+            echo "Wrote mobile/.env from GOOGLE_WEB_CLIENT_ID secret."
+          elif [ -f .env ]; then
+            echo "Using mobile/.env from checkout."
+          else
+            echo "::warning::No mobile/.env and no MOBILE_ENV / GOOGLE_WEB_CLIENT_ID secret."
+            echo "Copy mobile/.env.example to mobile/.env or add GOOGLE_WEB_CLIENT_ID GitHub secret."
+          fi
+
+      - name: Build APK
+        working-directory: ./mobile
+        run: |
+          DART_DEFINES=$(bash scripts/load-dart-defines.sh)
+          if [ -n "$DART_DEFINES" ]; then
             echo "GOOGLE_WEB_CLIENT_ID is set."
           else
-            echo "::warning::GOOGLE_WEB_CLIENT_ID secret is not set."
-            echo "Create a Web OAuth client in Google Cloud and add the client ID as this secret."
+            echo "::warning::GOOGLE_WEB_CLIENT_ID is not set."
+            echo "Add GOOGLE_WEB_CLIENT_ID to mobile/.env or GitHub Actions secrets."
           fi
           flutter build apk --release $DART_DEFINES
 
