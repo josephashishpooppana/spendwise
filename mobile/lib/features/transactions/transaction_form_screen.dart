@@ -589,15 +589,15 @@ class TransactionDetailScreen extends ConsumerWidget {
               ),
               Text(Formatters.txnType(txn.type)),
               if (txn.isAutomated)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
                   child: Chip(
-                    label: const Text('Automated (NACH)'),
+                    label: Text('Automated (NACH)'),
                     visualDensity: VisualDensity.compact,
                   ),
                 ),
               const Divider(height: 24),
-              _SectionTitle('Details'),
+              const _SectionTitle('Details'),
               _DetailRow('Description', txn.description),
               _DetailRow('Category', Formatters.categoryLabel(txn.category)),
               _DetailRow('Date', Formatters.dateTime.format(txn.timestamp)),
@@ -609,9 +609,7 @@ class TransactionDetailScreen extends ConsumerWidget {
                 ),
               ],
               const SizedBox(height: 12),
-              _SectionTitle(
-                txn.type == TransactionType.income ? 'Payment' : 'Payment',
-              ),
+              const _SectionTitle('Payment'),
               if (txn.type == TransactionType.income) ...[
                 _DetailRow(
                   'Credited to',
@@ -626,7 +624,7 @@ class TransactionDetailScreen extends ConsumerWidget {
                 if (data.app != null)
                   _DetailRow('Payment app', data.app!.name)
                 else
-                  _DetailRow('Payment app', 'None'),
+                  const _DetailRow('Payment app', 'None'),
                 if (data.method != null)
                   _DetailRow('Payment method', data.method!.name),
                 _DetailRow(
@@ -644,7 +642,7 @@ class TransactionDetailScreen extends ConsumerWidget {
               ],
               if (data.cashbacks.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                _SectionTitle('Cashback / rewards'),
+                const _SectionTitle('Cashback / rewards'),
                 ...data.cashbacks.map(
                   (cb) => _DetailRow(
                     cb.kind == CashbackKind.rewardPoints
@@ -667,12 +665,12 @@ class TransactionDetailScreen extends ConsumerWidget {
                 _DetailRow('From expense', txn.cashbackFromExpenseId!),
               if (txn.notes?.isNotEmpty == true) ...[
                 const SizedBox(height: 12),
-                _SectionTitle('Notes'),
+                const _SectionTitle('Notes'),
                 Text(txn.notes!),
               ],
               if (split != null) ...[
                 const SizedBox(height: 16),
-                _SectionTitle('Bill split'),
+                const _SectionTitle('Bill split'),
                 if (data.group != null)
                   _DetailRow('Group', data.group!.name),
                 Card(
