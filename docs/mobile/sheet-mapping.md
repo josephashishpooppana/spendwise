@@ -87,7 +87,7 @@ C = description (+ optional split/cashback note)
 
 ## Drive Backup
 
-Upload `spendwise-backup-YYYY-MM-DD.json` containing full local DB export (all tables) to Google Drive folder `SpendWise Backups`.
+Upload `spendwise-backup-YYYY-Www.json` (one file per ISO week) containing full local DB export to Google Drive folder `SpendWise Backups`. Syncing again in the same week replaces that file; a new file is created when the week changes.
 
 ## Import from Google Sheet (app ← sheet)
 

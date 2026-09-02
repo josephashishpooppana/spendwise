@@ -354,7 +354,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Text('About', style: Theme.of(context).textTheme.titleLarge),
           const Text(
             'SpendWise stores all data locally on your device. '
-            'Daily sync uploads a JSON backup to Google Drive and appends new transactions to your Google Sheet.',
+            'Sync uploads a weekly JSON backup to Google Drive (same file all week, replaced on each sync) and appends new transactions to your Google Sheet.',
           ),
         ],
       ),

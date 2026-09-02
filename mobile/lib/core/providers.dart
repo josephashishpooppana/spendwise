@@ -30,6 +30,12 @@ final paymentMethodsProvider =
   return db.getPaymentMethods();
 });
 
+final paymentAppSourceLinksProvider =
+    FutureProvider<List<PaymentAppSourceLink>>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return db.getAppSourceLinks();
+});
+
 final transactionsProvider = FutureProvider<List<TransactionModel>>((ref) async {
   final db = await ref.watch(databaseProvider.future);
   return db.getTransactions(limit: 200);

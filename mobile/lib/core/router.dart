@@ -102,8 +102,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ContactFormScreen(),
       ),
       GoRoute(
+        path: '/contacts/:id',
+        builder: (context, state) => ContactFormScreen(
+          contactId: state.pathParameters['id'],
+        ),
+      ),
+      GoRoute(
         path: '/groups',
         builder: (context, state) => const GroupsScreen(),
+      ),
+      GoRoute(
+        path: '/groups/new',
+        builder: (context, state) => const GroupFormScreen(),
+      ),
+      GoRoute(
+        path: '/groups/:id',
+        builder: (context, state) => GroupFormScreen(
+          groupId: state.pathParameters['id'],
+        ),
       ),
     ],
   );

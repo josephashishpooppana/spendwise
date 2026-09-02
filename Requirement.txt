@@ -7,3 +7,6 @@
 7. I need a flutter app to handle the same in all same logic which i have (I dont have flutter installed in system. add  a work flow file in git so i can get app build from github)
 8. I dont need a backend all the data will be saved in phone app local storage and sync the file daily to google drive
 9. I also need to update the sheet provide in above link daily as a addition, with google auth
+
+New Requirements:
+1. If I add i select a payment app only the payment method linked to that app alone should be in dropdown and if i select a payment 

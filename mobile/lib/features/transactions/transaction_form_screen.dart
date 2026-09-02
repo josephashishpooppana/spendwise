@@ -5,6 +5,7 @@ import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/cashback_service.dart';
+import 'package:spendwise_mobile/domain/services/payment_selection_filter.dart';
 import 'package:spendwise_mobile/domain/services/transaction_service.dart';
 class TransactionFormScreen extends ConsumerStatefulWidget {
   const TransactionFormScreen({super.key, this.transactionId});
@@ -149,11 +150,121 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
     }
   }
 
+  void _onAppChanged(String? appId) {
+    final methods = ref.read(paymentMethodsProvider).valueOrNull ?? [];
+    final sources = ref.read(paymentSourcesProvider).valueOrNull ?? [];
+    final apps = ref.read(paymentAppsProvider).valueOrNull ?? [];
+    final appLinks = ref.read(paymentAppSourceLinksProvider).valueOrNull ?? [];
+
+    final app = appId == null
+        ? null
+        : apps.where((a) => a.id == appId).firstOrNull;
+
+    final filteredMethods = PaymentSelectionFilter.methodsForApp(
+      allMethods: methods,
+      appId: appId,
+      app: app,
+    );
+
+    var methodId = _methodId;
+    if (!PaymentSelectionFilter.containsId(filteredMethods, methodId)) {
+      methodId = PaymentSelectionFilter.pickFirstId(
+        filteredMethods,
+        (m) => m.id,
+      );
+    }
+
+    final method = methodId == null
+        ? null
+        : methods.where((m) => m.id == methodId).firstOrNull;
+
+    final filteredSources = PaymentSelectionFilter.sourcesForExpense(
+      allSources: sources,
+      appLinks: appLinks,
+      appId: appId,
+      method: method,
+    );
+
+    var sourceId = _sourceId;
+    if (!PaymentSelectionFilter.containsSourceId(filteredSources, sourceId)) {
+      sourceId = PaymentSelectionFilter.pickFirstId(
+        filteredSources,
+        (s) => s.id,
+      );
+    }
+
+    setState(() {
+      _appId = appId;
+      _methodId = methodId;
+      _sourceId = sourceId;
+    });
+  }
+
+  void _onMethodChanged(String? methodId) {
+    final methods = ref.read(paymentMethodsProvider).valueOrNull ?? [];
+    final sources = ref.read(paymentSourcesProvider).valueOrNull ?? [];
+    final appLinks = ref.read(paymentAppSourceLinksProvider).valueOrNull ?? [];
+
+    final method = methodId == null
+        ? null
+        : methods.where((m) => m.id == methodId).firstOrNull;
+
+    final filteredSources = PaymentSelectionFilter.sourcesForExpense(
+      allSources: sources,
+      appLinks: appLinks,
+      appId: _appId,
+      method: method,
+    );
+
+    var sourceId = _sourceId;
+    if (!PaymentSelectionFilter.containsSourceId(filteredSources, sourceId)) {
+      sourceId = PaymentSelectionFilter.pickFirstId(
+        filteredSources,
+        (s) => s.id,
+      );
+    }
+
+    setState(() {
+      _methodId = methodId;
+      _sourceId = sourceId;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final sourcesAsync = ref.watch(paymentSourcesProvider);
     final appsAsync = ref.watch(paymentAppsProvider);
     final methodsAsync = ref.watch(paymentMethodsProvider);
+    final appLinksAsync = ref.watch(paymentAppSourceLinksProvider);
+
+    final allMethods = methodsAsync.valueOrNull ?? [];
+    final allSources = sourcesAsync.valueOrNull ?? [];
+    final allApps = appsAsync.valueOrNull ?? [];
+    final appLinks = appLinksAsync.valueOrNull ?? [];
+
+    final selectedApp = _appId == null
+        ? null
+        : allApps.where((a) => a.id == _appId).firstOrNull;
+    final selectedMethod = _methodId == null
+        ? null
+        : allMethods.where((m) => m.id == _methodId).firstOrNull;
+
+    final filteredMethods = _type == TransactionType.expense
+        ? PaymentSelectionFilter.methodsForApp(
+            allMethods: allMethods,
+            appId: _appId,
+            app: selectedApp,
+          )
+        : <PaymentMethodModel>[];
+
+    final filteredSources = _type == TransactionType.income
+        ? PaymentSelectionFilter.sourcesForIncome(allSources)
+        : PaymentSelectionFilter.sourcesForExpense(
+            allSources: allSources,
+            appLinks: appLinks,
+            appId: _appId,
+            method: selectedMethod,
+          );
 
     return Scaffold(
       appBar: AppBar(
@@ -196,6 +307,10 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                 _category = _type == TransactionType.income
                     ? incomeCategories.first
                     : expenseCategories.first;
+                if (_type == TransactionType.income) {
+                  _appId = null;
+                  _methodId = null;
+                }
               }),
             ),
             const SizedBox(height: 16),
@@ -258,17 +373,22 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                       (a) => DropdownMenuItem(value: a.id, child: Text(a.name)),
                     ),
                   ],
-                  onChanged: (v) => setState(() => _appId = v),
+                  onChanged: _onAppChanged,
                 ),
               ),
               const SizedBox(height: 12),
               methodsAsync.when(
                 loading: () => const SizedBox.shrink(),
                 error: (e, _) => Text('$e'),
-                data: (methods) => DropdownButtonFormField<String?>(
-                  value: _methodId,
+                data: (_) => DropdownButtonFormField<String?>(
+                  value: PaymentSelectionFilter.containsId(
+                    filteredMethods,
+                    _methodId,
+                  )
+                      ? _methodId
+                      : null,
                   decoration: const InputDecoration(labelText: 'Payment method'),
-                  items: methods
+                  items: filteredMethods
                       .map(
                         (m) => DropdownMenuItem(
                           value: m.id,
@@ -276,7 +396,7 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                         ),
                       )
                       .toList(),
-                  onChanged: (v) => setState(() => _methodId = v),
+                  onChanged: _onMethodChanged,
                   validator: (v) =>
                       _type == TransactionType.expense && v == null
                           ? 'Required'
@@ -288,24 +408,26 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
             sourcesAsync.when(
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => Text('$e'),
-              data: (sources) {
-                final filtered = _type == TransactionType.income
-                    ? sources
-                        .where((s) => s.sourceTypeKey != 'DEBIT_CARD')
-                        .toList()
-                    : sources;
+              data: (_) {
                 return DropdownButtonFormField<String?>(
-                  value: _sourceId,
+                  value: PaymentSelectionFilter.containsSourceId(
+                    filteredSources,
+                    _sourceId,
+                  )
+                      ? _sourceId
+                      : null,
                   decoration: InputDecoration(
                     labelText: _type == TransactionType.income
                         ? 'Credited to'
                         : 'Payment source',
                   ),
-                  items: filtered
+                  items: filteredSources
                       .map(
                         (s) => DropdownMenuItem(
                           value: s.id,
-                          child: Text('${s.name} (${Formatters.currency.format(s.balance)})'),
+                          child: Text(
+                            '${s.name} (${Formatters.currency.format(s.balance)})',
+                          ),
                         ),
                       )
                       .toList(),

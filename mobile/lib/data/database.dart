@@ -407,6 +407,17 @@ class AppDatabase {
 
   Future<void> deleteContact(String id) async {
     await _db.delete('contacts', where: 'id = ?', whereArgs: [id]);
+    final groups = await getGroups();
+    for (final group in groups) {
+      if (!group.memberIds.contains(id)) continue;
+      await upsertGroup(
+        GroupModel(
+          id: group.id,
+          name: group.name,
+          memberIds: group.memberIds.where((m) => m != id).toList(),
+        ),
+      );
+    }
   }
 
   Future<List<GroupModel>> getGroups() async {

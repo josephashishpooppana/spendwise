@@ -8,6 +8,7 @@ import 'package:googleapis/sheets/v4.dart' as sheets;
 import 'package:http/http.dart' as http;
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/core/google_config.dart';
+import 'package:spendwise_mobile/integrations/drive_backup_naming.dart';
 import 'package:spendwise_mobile/integrations/sheet_range.dart';
 import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 
@@ -104,6 +105,49 @@ class DriveSyncService {
       bytes.length,
       contentType: 'application/json',
     );
+
+    final file = drive.File()
+      ..name = fileName
+      ..parents = folderId != null ? [folderId] : null;
+
+    final created = await api.files.create(
+      file,
+      uploadMedia: media,
+    );
+    return created.id;
+  }
+
+  /// One backup file per ISO week. Replaces the existing file if sync runs again
+  /// within the same week; a new file is created automatically when the week changes.
+  Future<String?> uploadWeeklyBackup({
+    required String jsonContent,
+    String? folderId,
+    DateTime? now,
+  }) async {
+    final api = await _auth.getDriveApi();
+    final fileName = DriveBackupNaming.weeklyFileName(now);
+    final bytes = utf8.encode(jsonContent);
+    final media = drive.Media(
+      Stream.value(bytes),
+      bytes.length,
+      contentType: 'application/json',
+    );
+
+    if (folderId != null) {
+      final escaped = fileName.replaceAll("'", r"\'");
+      final query =
+          "name='$escaped' and '$folderId' in parents and trashed=false";
+      final existing = await api.files.list(
+        q: query,
+        spaces: 'drive',
+        fields: 'files(id)',
+      );
+      for (final f in existing.files ?? []) {
+        if (f.id != null) {
+          await api.files.delete(f.id!);
+        }
+      }
+    }
 
     final file = drive.File()
       ..name = fileName
@@ -241,14 +285,12 @@ class SyncService {
       try {
         folderId ??= await drive.ensureBackupFolder();
         final json = await exportJson();
-        final fileName =
-            'spendwise-backup-${DateTime.now().toIso8601String().substring(0, 10)}.json';
-        await drive.uploadBackup(
-          fileName: fileName,
+        final backupFileName = DriveBackupNaming.weeklyFileName();
+        await drive.uploadWeeklyBackup(
           jsonContent: json,
           folderId: folderId,
         );
-        backupNote = 'Drive backup saved.';
+        backupNote = 'Drive backup saved ($backupFileName).';
       } catch (e) {
         debugPrint('Drive backup skipped: $e');
         backupNote = 'Drive backup skipped: $e';
