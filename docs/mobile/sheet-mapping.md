@@ -83,8 +83,20 @@ C = description (+ optional split/cashback note)
 2. On daily sync, query transactions where `id NOT IN exported_ids` OR `updated_at > last_sync_at`.
 3. Use Sheets API `spreadsheets.values.append` on `Sheet1!A:AS` with `INSERT_ROWS`.
 4. Resolve sheet name at runtime via `spreadsheets.get` (gid → sheet title).
-5. Never import sheet → app in v1 (app is source of truth).
+5. Never import sheet → app on sync (sync is append-only). Use **Import from Google Sheet** in Settings for a one-time full import.
 
 ## Drive Backup
 
 Upload `spendwise-backup-YYYY-MM-DD.json` containing full local DB export (all tables) to Google Drive folder `SpendWise Backups`.
+
+## Import from Google Sheet (app ← sheet)
+
+In the app: **Settings → Import from Google Sheet**
+
+- Reads all data rows from `Sheet1` starting at row 3 (`A3:AS`)
+- Each non-empty **Credit** or **Debit** cell becomes one income/expense transaction
+- Maps columns to accounts (ICICI, BOB, HDFC, credit cards, cash) per table above
+- Replaces local transactions and recalculates account balances
+- Marks imported rows so **Sync now** will not duplicate them back to the sheet
+
+Requires Google sign-in (same as sync).

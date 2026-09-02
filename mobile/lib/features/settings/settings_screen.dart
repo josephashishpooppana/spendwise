@@ -15,7 +15,68 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _syncing = false;
+  bool _importing = false;
   String? _message;
+
+  Future<void> _importFromSheet() async {
+    final db = await ref.read(databaseProvider.future);
+    final count = await db.countTransactions();
+
+    if (!mounted) return;
+    final replace = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import from Google Sheet?'),
+        content: Text(
+          count > 0
+              ? 'This will read all rows from your Daily Expenses sheet (Sheet1) '
+                  'and replace $count local transaction(s).\n\n'
+                  'Sign in with Google first if you have not already.'
+              : 'This will read all existing rows from your Daily Expenses sheet '
+                  '(Sheet1) into the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(count > 0 ? 'Replace & import' : 'Import'),
+          ),
+        ],
+      ),
+    );
+
+    if (replace != true || !mounted) return;
+
+    setState(() {
+      _importing = true;
+      _message = null;
+    });
+
+    try {
+      final importService = await ref.read(sheetImportServiceProvider.future);
+      final state = await db.getSyncState();
+      final result = await importService.importFromGoogleSheet(
+        spreadsheetId: state.sheetId,
+        sheetGid: state.sheetGid,
+        fallbackSheetName: state.sheetName,
+        replaceExisting: true,
+      );
+
+      ref.invalidate(transactionsProvider);
+      ref.invalidate(dashboardStatsProvider);
+      ref.invalidate(paymentSourcesProvider);
+      ref.invalidate(syncStateProvider);
+
+      setState(() => _message = result.message);
+    } catch (e) {
+      setState(() => _message = 'Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
 
   Future<void> _syncNow() async {
     setState(() {
@@ -126,7 +187,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } catch (e) {
       setState(() {
         _message =
-            'Sign-in failed: $e. Ensure Android OAuth client SHA-1 matches your APK keystore (see google-setup.md).';
+            'Sign-in failed (error 10 = OAuth misconfiguration).\n\n'
+            'Checklist:\n'
+            '1. Google Cloud Android client package: com.spendwise.mobile\n'
+            '2. SHA-1 from Build APK workflow matches your keystore\n'
+            '3. GitHub secret GOOGLE_WEB_CLIENT_ID is set and APK rebuilt\n'
+            '4. Your Gmail is a test user on OAuth consent screen\n\n'
+            'Details: docs/mobile/google-setup.md\n'
+            'Raw error: $e';
       });
     }
   }
@@ -223,6 +291,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   )
                 : const Icon(Icons.sync),
             label: Text(_syncing ? 'Syncing…' : 'Sync now'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: (_importing || _syncing) ? null : _importFromSheet,
+            icon: _importing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download),
+            label: Text(_importing ? 'Importing…' : 'Import from Google Sheet'),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(

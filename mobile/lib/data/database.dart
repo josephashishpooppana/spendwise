@@ -325,8 +325,39 @@ class AppDatabase {
     return TransactionModel.fromMap(rows.first);
   }
 
+  Future<bool> transactionExists(String id) async {
+    final rows = await _db.query(
+      'transactions',
+      columns: ['id'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  Future<int> countTransactions() async {
+    final result =
+        await _db.rawQuery('SELECT COUNT(*) as c FROM transactions');
+    return (result.first['c'] as int?) ?? 0;
+  }
+
+  Future<void> clearAllTransactions() async {
+    await _db.delete('cashbacks');
+    await _db.delete('bill_splits');
+    await _db.delete('transactions');
+  }
+
+  Future<void> resetAllSourceBalances() async {
+    await _db.update('payment_sources', {'balance': 0});
+  }
+
   Future<void> insertTransaction(TransactionModel txn) async {
-    await _db.insert('transactions', txn.toMap());
+    await _db.insert(
+      'transactions',
+      txn.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<void> updateTransaction(TransactionModel txn) async {

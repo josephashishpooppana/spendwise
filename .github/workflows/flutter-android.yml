@@ -38,7 +38,7 @@ jobs:
           flutter create _flutter_scaffold \
             --org com.spendwise \
             --platforms=android \
-            --project-name spendwise_mobile
+            --project-name mobile
           cp -r _flutter_scaffold/android .
           rm -rf _flutter_scaffold
           bash scripts/patch-android-after-create.sh
@@ -103,7 +103,28 @@ jobs:
 
       - name: Build APK
         working-directory: ./mobile
-        run: flutter build apk --release
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          DART_DEFINES=""
+          if [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
+            DART_DEFINES="--dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID"
+            echo "GOOGLE_WEB_CLIENT_ID is set."
+          else
+            echo "::warning::GOOGLE_WEB_CLIENT_ID secret is not set."
+            echo "Create a Web OAuth client in Google Cloud and add the client ID as this secret."
+          fi
+          flutter build apk --release $DART_DEFINES
+
+      - name: Print APK signing SHA-1 (verify Google OAuth)
+        working-directory: ./mobile
+        run: |
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          if [ -f "$APK" ]; then
+            echo "=== SHA-1 of the built APK (must match Google Android OAuth client) ==="
+            keytool -printcert -jarfile "$APK" | grep -E "SHA1:|SHA-1:" || true
+            echo "=== Package name must be: com.spendwise.mobile ==="
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

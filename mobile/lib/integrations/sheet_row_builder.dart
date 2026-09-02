@@ -84,7 +84,7 @@ class SheetRowBuilder {
 
     final mapping = findMapping(source.name, mappings);
     if (mapping != null) {
-      final colIndex = _columnLetterToIndex(
+      final colIndex = columnLetterToIndex(
         transaction.type == TransactionType.income
             ? mapping.creditColumn
             : mapping.debitColumn,
@@ -100,7 +100,7 @@ class SheetRowBuilder {
     return row;
   }
 
-  static int _columnLetterToIndex(String letter) {
+  static int columnLetterToIndex(String letter) {
     var index = 0;
     for (var i = 0; i < letter.length; i++) {
       index = index * 26 + (letter.codeUnitAt(i) - 64);

@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis/sheets/v4.dart' as sheets;
 import 'package:spendwise_mobile/data/models/models.dart';
+import 'package:spendwise_mobile/core/google_config.dart';
 import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 
 const _scopes = [
@@ -32,8 +33,12 @@ class GoogleAuthService {
   final GoogleSignIn? _signInOverride;
   GoogleSignIn? _signIn;
 
-  GoogleSignIn get _client =>
-      _signInOverride ?? (_signIn ??= GoogleSignIn(scopes: _scopes));
+  GoogleSignIn get _client => _signInOverride ??
+      (_signIn ??= GoogleSignIn(
+        scopes: _scopes,
+        serverClientId:
+            GoogleConfig.webClientId.isEmpty ? null : GoogleConfig.webClientId,
+      ));
 
   GoogleSignInAccount? get currentUser {
     try {
@@ -133,6 +138,22 @@ class SheetsSyncService {
       }
     }
     return spreadsheet.sheets?.first.properties?.title;
+  }
+
+  Future<List<List<Object?>>> readValues({
+    required String spreadsheetId,
+    required String range,
+  }) async {
+    final api = await _auth.getSheetsApi();
+    if (api == null) return [];
+
+    final response = await api.spreadsheets.values.get(spreadsheetId, range);
+    final values = response.values;
+    if (values == null) return [];
+
+    return values
+        .map((row) => row.map<Object?>((cell) => cell).toList())
+        .toList();
   }
 
   Future<bool> appendRows({
