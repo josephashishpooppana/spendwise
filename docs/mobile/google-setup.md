@@ -20,48 +20,37 @@ Follow these steps to enable Google Sign-In, Drive backup, and Sheets sync for t
    - `https://www.googleapis.com/auth/drive.file`
 5. Add your Google account as a test user (while in Testing mode)
 
-## 3. GitHub Secrets (one-time)
+## 3. Generate keystore in GitHub (no local setup)
 
-Add these repository secrets under **Settings → Secrets and variables → Actions**:
+1. Go to **Actions → Android Keystore Setup → Run workflow**
+2. Enter a password (e.g. `MySecurePass123`) — use the same for key password if you want
+3. Leave alias as `upload` → **Run workflow**
+4. Open the run and expand:
+   - **Print SHA-1 for Google OAuth** → copy the `SHA1:` line
+   - **Print base64 for ANDROID_KEYSTORE_BASE64** → copy the long base64 string
+5. Go to **Settings → Secrets and variables → Actions** and add:
 
-| Secret | Description |
+| Secret | Value |
 |---|---|
-| `ANDROID_KEYSTORE_BASE64` | Base64-encoded `.jks` keystore file |
-| `KEYSTORE_PASSWORD` | Keystore password |
-| `KEY_ALIAS` | Key alias |
-| `KEY_PASSWORD` | Key password |
+| `ANDROID_KEYSTORE_BASE64` | The base64 string from step 4 |
+| `KEYSTORE_PASSWORD` | The password you entered |
+| `KEY_ALIAS` | `upload` |
+| `KEY_PASSWORD` | The key password you entered |
 
-### Create a release keystore (if you do not have one)
+Run this workflow **once**. Keep the same secrets forever — changing them changes the SHA-1.
 
-```powershell
-keytool -genkey -v -keystore release.keystore -alias upload -keyalg RSA -keysize 2048 -validity 10000
-```
-
-Remember the passwords and alias — you need them for the GitHub secrets.
-
-### Encode keystore for GitHub
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Set-Clipboard
-```
-
-Paste the clipboard value as `ANDROID_KEYSTORE_BASE64`.
-
-## 4. Get SHA-1 from GitHub Actions
-
-1. Go to **Actions → Build APK → Run workflow**
-2. Open the workflow run
-3. Expand **Print release SHA-1 (for Google OAuth)**
-4. Copy the line that starts with `SHA1:` (between the `===` markers)
-
-If the step says **SHA-1 not available**, the repository secrets from step 3 are missing — add them and re-run.
-
-## 5. Create Android OAuth client
+## 4. Create Android OAuth client
 
 1. Go to **APIs & Services → Google Auth Platform → Clients → Create client**
 2. Application type: **Android**
 3. Package name: `com.spendwise.mobile`
-4. SHA-1 certificate fingerprint: paste the value from step 4
+4. SHA-1: paste the value from **Android Keystore Setup** step 4
+
+## 5. Build and get APK
+
+1. **Actions → Build APK → Run workflow**
+2. **Print release SHA-1** should now show the same SHA-1 (confirms secrets work)
+3. Download **Artifacts → spendwise-apk** and install on your phone
 
 ## 6. Configure the app
 
@@ -74,9 +63,7 @@ Ensure the Google account you sign in with has **Editor** access to that spreads
 
 ## 7. Download APK from GitHub Actions
 
-1. Push to `main` or run **Build APK** workflow manually
-2. Open the workflow run → **Artifacts** → download `spendwise-apk`
-3. Install on your Android device
+Already covered in step 5 — artifact name is `spendwise-apk`.
 
 ## Troubleshooting
 
