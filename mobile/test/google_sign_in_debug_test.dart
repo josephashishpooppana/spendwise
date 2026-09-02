@@ -37,7 +37,7 @@ void main() {
 
       final masked = GoogleSignInDebugReport.maskClientId(id);
 
-      expect(masked, startsWith('102045467689'));
+      expect(masked, startsWith('1020454676892'));
       expect(masked, endsWith('.apps.googleusercontent.com'));
       expect(masked, contains('…'));
     });

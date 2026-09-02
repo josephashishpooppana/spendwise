@@ -114,10 +114,18 @@ Google Cloud checks:
 
   static String maskClientId(String clientId) {
     if (clientId.isEmpty) return '(empty)';
+
+    const suffix = '.apps.googleusercontent.com';
+    if (clientId.endsWith(suffix) && clientId.length > suffix.length + 8) {
+      final dash = clientId.indexOf('-');
+      final prefixEnd = dash > 0 ? dash : 12;
+      return '${clientId.substring(0, prefixEnd)}…$suffix';
+    }
+
     if (clientId.length <= 20) {
       return '${clientId.substring(0, 4)}…${clientId.substring(clientId.length - 4)}';
     }
-    return '${clientId.substring(0, 12)}…${clientId.substring(clientId.length - 20)}';
+    return '${clientId.substring(0, 12)}…${clientId.substring(clientId.length - 12)}';
   }
 
   static String _stringify(Object? value) {
