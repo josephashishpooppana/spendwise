@@ -1,12 +1,17 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spendwise_mobile/core/router.dart';
 import 'package:spendwise_mobile/core/theme.dart';
-import 'package:spendwise_mobile/integrations/sync_scheduler.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await SyncScheduler.initialize();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    if (kDebugMode) {
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+    }
+  };
   runApp(const ProviderScope(child: SpendWiseApp()));
 }
 

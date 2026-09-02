@@ -74,3 +74,19 @@ Already covered in step 5 — artifact name is `spendwise-apk`.
 | Background sync not running | Disable battery optimization for SpendWise; use Sync now |
 
 See also [sheet-mapping.md](./sheet-mapping.md) for column layout details.
+
+## When does the app ask for Google login?
+
+**Not on app open.** SpendWise starts fully offline with local storage only.
+
+Google sign-in happens only when you:
+
+1. Open **Settings** (bottom nav)
+2. Tap **Sign in** — choose your Gmail account
+3. Tap **Sync now** — Google asks permission for **Google Sheets** and **Google Drive**
+
+Your spreadsheet is already configured in the app (`Sheet1` in your Daily Expenses sheet). The signed-in Google account must have **Editor** access to that sheet.
+
+## App closes immediately on open
+
+If the app crashes at launch, rebuild with the latest code (Workmanager is no longer initialized at startup). Re-run **Actions → Build APK** and install the new APK.

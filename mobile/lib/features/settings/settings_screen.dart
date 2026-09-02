@@ -103,10 +103,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _signIn() async {
-    final auth = ref.read(googleAuthProvider);
-    await auth.signIn();
-    ref.invalidate(syncStateProvider);
-    setState(() {});
+    setState(() => _message = null);
+    try {
+      final auth = ref.read(googleAuthProvider);
+      final account = await auth.signIn();
+      if (account == null) {
+        setState(() => _message = 'Sign-in cancelled.');
+        return;
+      }
+      final db = await ref.read(databaseProvider.future);
+      final state = await db.getSyncState();
+      await db.saveSyncState(
+        state.copyWith(googleAccountEmail: account.email),
+      );
+      ref.invalidate(syncStateProvider);
+      setState(() {
+        _message =
+            'Signed in as ${account.email}. Google will ask permission for '
+            'Sheets and Drive when you tap Sync now.';
+      });
+    } catch (e) {
+      setState(() {
+        _message =
+            'Sign-in failed: $e. Ensure Android OAuth client SHA-1 matches your APK keystore (see google-setup.md).';
+      });
+    }
   }
 
   Future<void> _signOut() async {
@@ -126,6 +147,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         children: [
           Text('Google sync', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
+          const Text(
+            'Google sign-in is optional and not shown at app launch. '
+            'Tap Sign in here, then Sync now. Google will request access to '
+            'update your spreadsheet and save backups to Drive.',
+            style: TextStyle(fontSize: 13, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
           ListTile(
             leading: const Icon(Icons.account_circle),
             title: Text(auth.currentUser?.email ?? 'Not signed in'),
@@ -175,7 +203,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: () => SyncScheduler.registerDailySync(),
+            onPressed: () async {
+              final ok = await SyncScheduler.registerDailySync();
+              setState(() {
+                _message = ok
+                    ? 'Daily background sync enabled.'
+                    : 'Could not enable background sync on this device.';
+              });
+            },
             icon: const Icon(Icons.schedule),
             label: const Text('Enable daily background sync'),
           ),

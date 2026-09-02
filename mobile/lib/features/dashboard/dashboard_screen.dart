@@ -6,8 +6,9 @@ import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 
 class AppShell extends StatelessWidget {
-  const AppShell({super.key, required this.child});
+  const AppShell({super.key, required this.location, required this.child});
 
+  final String location;
   final Widget child;
 
   static const _routes = [
@@ -34,7 +35,6 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final location = GoRouterState.of(context).uri.toString();
     final index = _indexForLocation(location);
 
     return Scaffold(
@@ -86,6 +86,7 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final statsAsync = ref.watch(dashboardStatsProvider);
+    final syncStateAsync = ref.watch(syncStateProvider);
 
     return statsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -102,6 +103,28 @@ class DashboardScreen extends ConsumerWidget {
               Text(
                 'SpendWise',
                 style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 12),
+              syncStateAsync.maybeWhen(
+                data: (syncState) {
+                  if (syncState.googleAccountEmail != null) {
+                    return const SizedBox.shrink();
+                  }
+                  return Card(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    child: ListTile(
+                      leading: const Icon(Icons.cloud_upload_outlined),
+                      title: const Text('Connect Google (optional)'),
+                      subtitle: const Text(
+                        'Sign in from Settings to back up data and update your Google Sheet. '
+                        'The app works fully offline without Google.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.go('/settings'),
+                    ),
+                  );
+                },
+                orElse: () => const SizedBox.shrink(),
               ),
               const SizedBox(height: 16),
               Row(

@@ -12,7 +12,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/',
     routes: [
       ShellRoute(
-        builder: (context, state, child) => AppShell(child: child),
+        builder: (context, state, child) => AppShell(
+          location: state.uri.toString(),
+          child: child,
+        ),
         routes: [
           GoRoute(
             path: '/',
