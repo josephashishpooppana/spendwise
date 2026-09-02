@@ -150,8 +150,9 @@ In the app: **Settings → Import from Google Sheet**
 
 - Reads all data rows from `Sheet1` starting at row 3 (`A3:BA`)
 - **Skips rows with empty description (column C)**
-- Each non-empty **Credit** or **Debit** cell becomes one income/expense transaction
-- Maps columns to accounts (ICICI, BOB, HDFC, credit cards, cash) per table above
+- Maps columns to accounts in the app **and** row 1–2 sheet headers (Credit / Debit / Balance or Bill Total)
+- **New accounts from headers** (e.g. Kotak Bank) are added automatically before import
+- **Credit and debit must be greater than zero** to import a transaction
 - Metadata columns AA–BA: uses values when present; missing fields stored as `unknown`
 - Registers each imported row in `spendwise_sheet_sync.json` with sheet row number
 - **Opening balances (first import / Replace & import):** reads the **last dated row** in the sheet and sets each account balance from its **Balance** column (banks, cash) or **Bill Total** column (credit cards). These values override a transaction-sum recalculation.

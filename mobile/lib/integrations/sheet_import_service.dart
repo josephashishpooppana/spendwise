@@ -6,8 +6,8 @@ import 'package:spendwise_mobile/integrations/sheet_balance_reader.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
 import 'package:spendwise_mobile/integrations/sheet_parser.dart';
 import 'package:spendwise_mobile/integrations/sheet_range.dart';
-import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
+import 'package:uuid/uuid.dart';
 
 class SheetImportService {
   SheetImportService({
@@ -21,6 +21,7 @@ class SheetImportService {
   final SheetsSyncService sheets;
   final AppDatabase db;
   final SheetSyncRegistry registry;
+  static const _uuid = Uuid();
 
   Future<SheetImportResult> importFromGoogleSheet({
     required String spreadsheetId,
@@ -47,23 +48,52 @@ class SheetImportService {
       final rangeEnd = SheetColumnProvisioner.appendRangeEndColumn(
         syncState.metadataStartColumnIndex,
       );
-      final range = formatSheetRange(resolvedTitle, 'A3:$rangeEnd');
+      final fullRange = formatSheetRange(resolvedTitle, 'A1:$rangeEnd');
 
-      final rows = await sheets.readValues(
+      final allRows = await sheets.readValues(
         spreadsheetId: spreadsheetId,
-        range: range,
+        range: fullRange,
       );
+
+      List<Object?> headerRow = const [];
+      List<Object?> subHeaderRow = const [];
+      final List<List<Object?>> rows;
+      if (allRows.length >= 3) {
+        headerRow = allRows[0];
+        subHeaderRow = allRows[1];
+        rows = allRows.sublist(2);
+      } else {
+        rows = allRows;
+      }
 
       if (rows.isEmpty) {
         return SheetImportResult(
           success: false,
-          message: 'No data rows found in $resolvedTitle ($range). '
+          message: 'No data rows found in $resolvedTitle. '
               'Check that the sheet has data from row 3 and your account has access.',
         );
       }
 
-      final sources = await db.getPaymentSources(all: true);
-      final mappings = SheetRowBuilder.mappingsFromSources(sources);
+      var sources = await db.getPaymentSources(all: true);
+      final headerMappings = SheetParser.mappingsFromSheetHeaders(
+        headerRow,
+        subHeaderRow,
+        metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      );
+      final createdSources = await _ensureSourcesFromHeaderMappings(
+        headerMappings: headerMappings,
+        sources: sources,
+      );
+      if (createdSources.isNotEmpty) {
+        sources = await db.getPaymentSources(all: true);
+      }
+
+      final mappings = SheetParser.buildImportMappings(
+        sources: sources,
+        headerRow: headerRow,
+        subHeaderRow: subHeaderRow,
+        metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      );
       final parsed = SheetParser.parseAllRows(
         rows,
         mappings: mappings,
@@ -74,7 +104,7 @@ class SheetImportService {
           success: false,
           message: 'Read ${rows.length} row(s) from $resolvedTitle but could not '
               'parse any transactions. Rows need a date, non-empty description (column C), '
-              'and an amount in a Credit/Debit column.',
+              'and credit or debit greater than zero.',
         );
       }
 
@@ -137,9 +167,10 @@ class SheetImportService {
 
       var balanceNote = '';
       if (replaceExisting) {
+        final sourcesForBalance = await db.getPaymentSources(all: true);
         balanceNote = await _applyOpeningBalancesFromSheet(
           rows: rows,
-          sources: sources,
+          sources: sourcesForBalance,
         );
       } else {
         await _recalculateBalancesFromTransactions();
@@ -150,12 +181,16 @@ class SheetImportService {
       var message =
           'Imported $imported transaction(s) from Google Sheet (${parsed.length} parsed, $skipped skipped). '
           'Rows with empty description were ignored.';
+      if (createdSources.isNotEmpty) {
+        message +=
+            '\nAdded ${createdSources.length} account(s) from sheet headers: ${createdSources.join(', ')}.';
+      }
       if (balanceNote.isNotEmpty) {
         message += '\n$balanceNote';
       }
       if (unmatched.isNotEmpty) {
         message +=
-            '\nNo matching account for: ${unmatched.join(', ')}. Add them under Accounts.';
+            '\nNo matching account for: ${unmatched.join(', ')}.';
       }
 
       return SheetImportResult(
@@ -164,6 +199,7 @@ class SheetImportService {
         imported: imported,
         skipped: skipped,
         unmatchedSources: unmatched,
+        sourcesCreated: createdSources.length,
       );
     } catch (e) {
       return SheetImportResult(
@@ -191,6 +227,31 @@ class SheetImportService {
       }
     }
     return SheetParser.matchSource(entry.sourceNamePattern, sources);
+  }
+
+  Future<Set<String>> _ensureSourcesFromHeaderMappings({
+    required List<SheetColumnMapping> headerMappings,
+    required List<PaymentSourceModel> sources,
+  }) async {
+    final created = <String>{};
+
+    for (final mapping in headerMappings) {
+      if (SheetParser.mappingCoveredBySource(mapping, sources)) continue;
+
+      final source = PaymentSourceModel(
+        id: _uuid.v4(),
+        name: mapping.sourceNamePattern,
+        sourceTypeKey: mapping.sourceTypeKey,
+        sheetCreditColumn: mapping.creditColumn,
+        sheetDebitColumn: mapping.debitColumn,
+        sheetBalanceColumn: mapping.balanceColumn,
+      );
+      await db.upsertPaymentSource(source);
+      sources.add(source);
+      created.add(mapping.sourceNamePattern);
+    }
+
+    return created;
   }
 
   String? _resolveMethodId(

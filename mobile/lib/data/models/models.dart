@@ -182,6 +182,8 @@ class PaymentSourceModel {
       sourceNamePattern: name,
       creditColumn: sheetCreditColumn!,
       debitColumn: sheetDebitColumn!,
+      balanceColumn: sheetBalanceColumn,
+      sourceTypeKey: sourceTypeKey,
     );
   }
 }
@@ -548,12 +550,21 @@ class SheetColumnMapping {
     required this.sourceNamePattern,
     required this.creditColumn,
     required this.debitColumn,
+    this.balanceColumn,
+    this.sourceTypeKey = 'BANK',
   });
 
   final String? sourceId;
   final String sourceNamePattern;
   final String creditColumn;
   final String debitColumn;
+  final String? balanceColumn;
+  final String sourceTypeKey;
+
+  bool get isCashLike =>
+      sourceTypeKey == 'CASH' || sourceTypeKey == 'WALLET';
+
+  bool get isCreditCard => sourceTypeKey == 'CREDIT_CARD';
 }
 
 class SyncStateModel {
