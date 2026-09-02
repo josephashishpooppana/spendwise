@@ -1,6 +1,5 @@
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_letters.dart';
-import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 
 /// One income or expense parsed from a single sheet cell.
 class ParsedSheetTransaction {

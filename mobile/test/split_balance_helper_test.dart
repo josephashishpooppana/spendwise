@@ -10,7 +10,7 @@ void main() {
       splitType: SplitType.equal,
       splitDetails: {'c1': 50, 'c2': 50},
     );
-    const settlements = [
+    final settlements = [
       SplitSettlementModel(
         id: 'x1',
         billSplitId: 's1',

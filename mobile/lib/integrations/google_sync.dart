@@ -4,7 +4,8 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
-import 'package:googleapis/sheets/v4.dart' as sheets;
+import 'package:googleapis/sheets/v4.dart' as gsheets;
+import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
 import 'package:http/http.dart' as http;
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/core/google_config.dart';
@@ -15,7 +16,7 @@ import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
 
 const _scopes = [
-  sheets.SheetsApi.spreadsheetsScope,
+  gsheets.SheetsApi.spreadsheetsScope,
   drive.DriveApi.driveFileScope,
 ];
 
@@ -122,9 +123,9 @@ class GoogleAuthService {
     return client;
   }
 
-  Future<sheets.SheetsApi> getSheetsApi() async {
+  Future<gsheets.SheetsApi> getSheetsApi() async {
     final client = await requireAuthClient();
-    return sheets.SheetsApi(client);
+    return gsheets.SheetsApi(client);
   }
 
   Future<drive.DriveApi> getDriveApi() async {
@@ -260,11 +261,11 @@ class SheetsSyncService {
     if (columnCount <= 0) return;
     final api = await _auth.getSheetsApi();
     await api.spreadsheets.batchUpdate(
-      sheets.BatchUpdateSpreadsheetRequest(
+      gsheets.BatchUpdateSpreadsheetRequest(
         requests: [
-          sheets.Request(
-            insertDimension: sheets.InsertDimensionRequest(
-              range: sheets.DimensionRange(
+          gsheets.Request(
+            insertDimension: gsheets.InsertDimensionRequest(
+              range: gsheets.DimensionRange(
                 sheetId: sheetId,
                 dimension: 'COLUMNS',
                 startIndex: startIndex,
@@ -289,7 +290,7 @@ class SheetsSyncService {
 
     final api = await _auth.getSheetsApi();
     final range = formatSheetRange(sheetTitle, 'A:$rangeEndColumn');
-    final request = sheets.ValueRange(values: rows);
+    final request = gsheets.ValueRange(values: rows);
     final response = await api.spreadsheets.values.append(
       request,
       spreadsheetId,
@@ -304,12 +305,12 @@ class SheetsSyncService {
 
   Future<void> batchUpdateRanges({
     required String spreadsheetId,
-    required List<sheets.ValueRange> ranges,
+    required List<gsheets.ValueRange> ranges,
   }) async {
     if (ranges.isEmpty) return;
     final api = await _auth.getSheetsApi();
     await api.spreadsheets.values.batchUpdate(
-      sheets.BatchUpdateValuesRequest(
+      gsheets.BatchUpdateValuesRequest(
         valueInputOption: 'USER_ENTERED',
         data: ranges,
       ),
@@ -432,7 +433,7 @@ class SyncService {
         }
       }
 
-      final updateRanges = <sheets.ValueRange>[];
+      final updateRanges = <gsheets.ValueRange>[];
       for (final p in toUpdate) {
         var rowNumber = p.sheetRowNumber;
         if (rowNumber == null || rowNumber <= 0) {

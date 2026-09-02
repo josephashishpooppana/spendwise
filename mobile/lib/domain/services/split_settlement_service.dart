@@ -71,11 +71,16 @@ class SplitSettlementService {
 
     final sources = await _db.getPaymentSources();
     final byId = {for (final s in sources) s.id: s.copyWith()};
-    _balanceService.applyTransaction(
-      txn: income,
-      sourcesById: byId,
-      reverse: false,
-    );
+    final source = byId[paymentSourceId];
+    if (source != null) {
+      _balanceService.applyDelta(
+        source: source,
+        amount: income.amount,
+        type: income.type,
+        sourcesById: byId,
+        reverse: false,
+      );
+    }
     for (final source in byId.values) {
       await _db.updateSourceBalance(source.id, source.balance);
     }

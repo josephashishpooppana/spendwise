@@ -80,7 +80,7 @@ class SheetSyncRegistry {
 
   static Future<SheetSyncRegistry> open({String? dbPath}) async {
     final base = dbPath ?? p.join(await getDatabasesPath(), 'spendwise.db');
-    final registry = SheetSyncRegistry('$base_sheet_sync.json');
+    final registry = SheetSyncRegistry('${p.withoutExtension(base)}_sheet_sync.json');
     await registry._load();
     return registry;
   }

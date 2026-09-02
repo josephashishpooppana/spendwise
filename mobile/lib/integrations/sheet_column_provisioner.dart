@@ -1,4 +1,4 @@
-import 'package:googleapis/sheets/v4.dart' as sheets;
+import 'package:googleapis/sheets/v4.dart' as gsheets;
 import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
@@ -77,13 +77,13 @@ class SheetColumnProvisioner {
     await sheets.batchUpdateRanges(
       spreadsheetId: syncState.sheetId,
       ranges: [
-        sheets.ValueRange(
+        gsheets.ValueRange(
           range: formatSheetRange(resolvedTitle, '${creditCol}1'),
           values: [
             [source.name],
           ],
         ),
-        sheets.ValueRange(
+        gsheets.ValueRange(
           range: formatSheetRange(resolvedTitle, '${creditCol}2:${balanceCol}2'),
           values: [
             ['Credit', 'Debit', thirdHeader],
