@@ -1,0 +1,9 @@
+1. I am maintaining a daily expense tracking sheet in google sheets, of all back accounts and credit cards and cash in hands and also the include the cash back money and all.
+2. sheet downloaded : "C:\Users\Joseph Ashish\Downloads\Daily Expenses.xlsx"
+3. I keep the sheet in google sheet link: https://docs.google.com/spreadsheets/d/1ObWgYGp928tIva0FvWZyIcFNvLRkkG0gTRHrgyQ9JbU/edit?gid=1320698518#gid=1320698518
+4. I also like to have cashback and splits in expenses and income
+5. I have a backend in  : C:\projects\spendwise-main\backend
+6. I have a frontend in  : C:\projects\spendwise-main\frontend
+7. I need a flutter app to handle the same in all same logic which i have (I dont have flutter installed in system. add  a work flow file in git so i can get app build from github)
+8. I dont need a backend all the data will be saved in phone app local storage and sync the file daily to google drive
+9. I also need to update the sheet provide in above link daily as a addition, with google auth
