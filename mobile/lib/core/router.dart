@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:spendwise_mobile/features/accounts/accounts_screens.dart';
 import 'package:spendwise_mobile/features/dashboard/dashboard_screen.dart';
 import 'package:spendwise_mobile/features/settings/settings_screen.dart';
+import 'package:spendwise_mobile/features/splits/split_form_screen.dart';
 import 'package:spendwise_mobile/features/splits/splits_screens.dart';
 import 'package:spendwise_mobile/features/transactions/transaction_form_screen.dart';
 import 'package:spendwise_mobile/features/transactions/transactions_screen.dart';
@@ -57,7 +58,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/transactions/:id/split',
-        builder: (context, state) => AddSplitScreen(
+        builder: (context, state) => SplitFormScreen(
           transactionId: state.pathParameters['id']!,
         ),
       ),

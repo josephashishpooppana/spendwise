@@ -274,14 +274,3 @@ class TransactionService {
     }
   }
 }
-
-extension on BillSplitModel {
-  BillSplitModel copyWith({String? transactionId}) => BillSplitModel(
-        id: id,
-        transactionId: transactionId ?? this.transactionId,
-        splitType: splitType,
-        splitDetails: splitDetails,
-        groupId: groupId,
-        isSettled: isSettled,
-      );
-}

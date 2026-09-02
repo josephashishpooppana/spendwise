@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
-import 'package:spendwise_mobile/domain/services/split_service.dart';
 import 'package:uuid/uuid.dart';
 
 class SplitsHubScreen extends ConsumerWidget {
@@ -68,12 +67,17 @@ class SplitsHubScreen extends ConsumerWidget {
                       leading: Icon(
                         split.isSettled ? Icons.check_circle : Icons.group,
                       ),
-                      title: Text('Split on txn ${split.transactionId.substring(0, 8)}…'),
+                      title: Text(
+                        'Split on txn ${split.transactionId.substring(0, 8)}…',
+                      ),
                       subtitle: Text(
-                        '${split.splitType.name} · ${split.splitDetails.length} people',
+                        '${split.splitType.name} · ${split.splitDetails.length + 1} people',
                       ),
                       trailing: Text(
                         split.isSettled ? 'Settled' : 'Open',
+                      ),
+                      onTap: () => context.push(
+                        '/transactions/${split.transactionId}/split',
                       ),
                     );
                   },
@@ -531,111 +535,6 @@ class _GroupFormScreenState extends ConsumerState<GroupFormScreen> {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class AddSplitScreen extends ConsumerStatefulWidget {
-  const AddSplitScreen({super.key, required this.transactionId});
-
-  final String transactionId;
-
-  @override
-  ConsumerState<AddSplitScreen> createState() => _AddSplitScreenState();
-}
-
-class _AddSplitScreenState extends ConsumerState<AddSplitScreen> {
-  SplitType _splitType = SplitType.equal;
-  final Map<String, double> _customAmounts = {};
-  final Set<String> _selectedContacts = {};
-  String? _groupId;
-
-  @override
-  Widget build(BuildContext context) {
-    final contactsAsync = ref.watch(contactsProvider);
-    final splitService = SplitService();
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Add split')),
-      body: contactsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('$e')),
-        data: (contacts) {
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              SegmentedButton<SplitType>(
-                segments: const [
-                  ButtonSegment(value: SplitType.equal, label: Text('Equal')),
-                  ButtonSegment(value: SplitType.custom, label: Text('Custom')),
-                ],
-                selected: {_splitType},
-                onSelectionChanged: (s) =>
-                    setState(() => _splitType = s.first),
-              ),
-              const SizedBox(height: 16),
-              ...contacts.map((c) {
-                return _splitType == SplitType.equal
-                    ? CheckboxListTile(
-                        title: Text(c.name),
-                        value: _selectedContacts.contains(c.id),
-                        onChanged: (v) {
-                          setState(() {
-                            if (v == true) {
-                              _selectedContacts.add(c.id);
-                            } else {
-                              _selectedContacts.remove(c.id);
-                            }
-                          });
-                        },
-                      )
-                    : ListTile(
-                        title: Text(c.name),
-                        trailing: SizedBox(
-                          width: 80,
-                          child: TextField(
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(hintText: '₹'),
-                            onChanged: (v) {
-                              _customAmounts[c.id] =
-                                  double.tryParse(v) ?? 0;
-                            },
-                          ),
-                        ),
-                      );
-              }),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () async {
-                  final db = await ref.read(databaseProvider.future);
-                  final txn = await db.getTransaction(widget.transactionId);
-                  if (txn == null) return;
-
-                  final split = _splitType == SplitType.equal
-                      ? splitService.createEqualSplit(
-                          id: const Uuid().v4(),
-                          transactionId: widget.transactionId,
-                          totalAmount: txn.amount,
-                          contactIds: _selectedContacts.toList(),
-                          groupId: _groupId,
-                        )
-                      : splitService.createCustomSplit(
-                          id: const Uuid().v4(),
-                          transactionId: widget.transactionId,
-                          amounts: _customAmounts,
-                          groupId: _groupId,
-                        );
-
-                  await db.upsertBillSplit(split);
-                  ref.invalidate(billSplitsProvider);
-                  if (context.mounted) context.pop();
-                },
-                child: const Text('Save split'),
-              ),
-            ],
-          );
-        },
       ),
     );
   }

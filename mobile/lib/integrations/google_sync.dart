@@ -140,7 +140,6 @@ class DriveSyncService {
       final existing = await api.files.list(
         q: query,
         spaces: 'drive',
-        fields: 'files(id)',
       );
       for (final f in existing.files ?? []) {
         if (f.id != null) {

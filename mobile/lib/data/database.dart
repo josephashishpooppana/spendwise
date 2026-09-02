@@ -29,10 +29,17 @@ class AppDatabase {
     final dbPath = path ?? p.join(await getDatabasesPath(), 'spendwise.db');
     final db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute(
+            'ALTER TABLE bill_splits ADD COLUMN my_share REAL',
+          );
+        }
       },
     );
     _instance = AppDatabase._(db);
@@ -42,10 +49,17 @@ class AppDatabase {
   static Future<AppDatabase> openMemory() async {
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 1,
+      version: 2,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute(
+            'ALTER TABLE bill_splits ADD COLUMN my_share REAL',
+          );
+        }
       },
     );
     return AppDatabase._(db);
@@ -150,7 +164,8 @@ class AppDatabase {
         split_type TEXT NOT NULL,
         split_details TEXT NOT NULL,
         group_id TEXT,
-        is_settled INTEGER NOT NULL DEFAULT 0
+        is_settled INTEGER NOT NULL DEFAULT 0,
+        my_share REAL
       )
     ''');
     await db.execute('''

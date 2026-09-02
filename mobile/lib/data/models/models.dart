@@ -402,6 +402,7 @@ class BillSplitModel {
     required this.splitDetails,
     this.groupId,
     this.isSettled = false,
+    this.myShare,
   });
 
   final String id;
@@ -410,6 +411,8 @@ class BillSplitModel {
   final Map<String, double> splitDetails;
   final String? groupId;
   final bool isSettled;
+  /// Payer share for custom splits (optional; equal splits derive from total).
+  final double? myShare;
 
   Map<String, Object?> toMap() => {
         'id': id,
@@ -420,6 +423,7 @@ class BillSplitModel {
             .join('|'),
         'group_id': groupId,
         'is_settled': isSettled ? 1 : 0,
+        'my_share': myShare,
       };
 
   factory BillSplitModel.fromMap(Map<String, Object?> map) {
@@ -439,8 +443,28 @@ class BillSplitModel {
       splitDetails: details,
       groupId: map['group_id'] as String?,
       isSettled: (map['is_settled'] as int? ?? 0) == 1,
+      myShare: (map['my_share'] as num?)?.toDouble(),
     );
   }
+
+  BillSplitModel copyWith({
+    String? id,
+    String? transactionId,
+    SplitType? splitType,
+    Map<String, double>? splitDetails,
+    String? groupId,
+    bool? isSettled,
+    double? myShare,
+  }) =>
+      BillSplitModel(
+        id: id ?? this.id,
+        transactionId: transactionId ?? this.transactionId,
+        splitType: splitType ?? this.splitType,
+        splitDetails: splitDetails ?? this.splitDetails,
+        groupId: groupId ?? this.groupId,
+        isSettled: isSettled ?? this.isSettled,
+        myShare: myShare ?? this.myShare,
+      );
 }
 
 class SheetColumnMapping {

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
+import 'package:spendwise_mobile/domain/services/split_service.dart';
 import 'package:spendwise_mobile/integrations/google_sign_in_debug.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
 import 'package:spendwise_mobile/integrations/sync_scheduler.dart';
@@ -110,11 +111,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           var suffix = '';
           final split = await db.getBillSplitForTransaction(txn.id);
           if (split != null) {
-            final parts = split.splitDetails.entries.map((e) {
-              final name = contacts[e.key]?.name ?? e.key;
-              return '$name:${e.value.toStringAsFixed(0)}';
-            });
-            suffix = ' [split: ${parts.join(', ')}]';
+            suffix = SplitService().formatSplitDescription(
+              split,
+              contacts,
+              totalAmount: txn.amount,
+            );
           }
           rows.add(PendingSheetRow(txn: txn, source: source, suffix: suffix));
 
