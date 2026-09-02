@@ -7,14 +7,14 @@ const syncTaskName = 'spendwiseDailySync';
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     WidgetsFlutterBinding.ensureInitialized();
-    // Background sync is triggered; full sync runs when app opens if this fails.
-    return Future.value(true);
+    // Background sync placeholder; full sync runs via Settings or on next app open.
+    return true;
   });
 }
 
 class SyncScheduler {
   static Future<void> initialize() async {
-    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+    await Workmanager().initialize(callbackDispatcher);
   }
 
   static Future<void> registerDailySync() async {

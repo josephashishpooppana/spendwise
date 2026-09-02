@@ -22,7 +22,7 @@ dependencies:
   googleapis_auth: ^1.6.0
   extension_google_sign_in_as_googleapis_auth: ^2.0.12
   flutter_secure_storage: ^9.2.4
-  workmanager: ^0.5.2
+  workmanager: ^0.7.0
   fl_chart: ^0.70.2
   collection: ^1.19.1
 
