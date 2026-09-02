@@ -116,14 +116,16 @@ jobs:
           MOBILE_ENV: ${{ secrets.MOBILE_ENV }}
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
-          if [ -n "$MOBILE_ENV" ]; then
+          # Prefer committed mobile/.env so repo is source of truth (secrets override only if no .env).
+          if [ -f .env ] && grep -q '^GOOGLE_WEB_CLIENT_ID=' .env; then
+            CLIENT_KEY="$(grep '^GOOGLE_WEB_CLIENT_ID=' .env | cut -d= -f2 | cut -d- -f2 | cut -d. -f1)"
+            echo "Using mobile/.env from checkout (Web client key starts with: ${CLIENT_KEY:0:5}…)."
+          elif [ -n "$MOBILE_ENV" ]; then
             printf '%s\n' "$MOBILE_ENV" > .env
             echo "Wrote mobile/.env from MOBILE_ENV secret."
           elif [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
             printf 'GOOGLE_WEB_CLIENT_ID=%s\n' "$GOOGLE_WEB_CLIENT_ID" > .env
             echo "Wrote mobile/.env from GOOGLE_WEB_CLIENT_ID secret."
-          elif [ -f .env ]; then
-            echo "Using mobile/.env from checkout."
           else
             echo "::warning::No mobile/.env and no MOBILE_ENV / GOOGLE_WEB_CLIENT_ID secret."
             echo "Copy mobile/.env.example to mobile/.env or add GOOGLE_WEB_CLIENT_ID GitHub secret."
@@ -134,7 +136,9 @@ jobs:
         run: |
           DART_DEFINES=$(bash scripts/load-dart-defines.sh)
           if [ -n "$DART_DEFINES" ]; then
-            echo "GOOGLE_WEB_CLIENT_ID is set."
+            CLIENT_KEY="$(grep '^GOOGLE_WEB_CLIENT_ID=' .env | cut -d= -f2 | cut -d- -f2 | cut -d. -f1)"
+            echo "GOOGLE_WEB_CLIENT_ID is set (key starts with: ${CLIENT_KEY:0:5}…)."
+            echo "Expected Web client key prefix: 8m1kv"
           else
             echo "::warning::GOOGLE_WEB_CLIENT_ID is not set."
             echo "Add GOOGLE_WEB_CLIENT_ID to mobile/.env or GitHub Actions secrets."

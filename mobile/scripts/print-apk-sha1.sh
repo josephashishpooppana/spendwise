@@ -13,6 +13,23 @@ echo "=== APK signing certificate (use SHA-1 in Google Cloud Android OAuth clien
 echo "APK: $APK"
 echo ""
 
+extract_sha1_colon() {
+  local raw="$1"
+  raw="$(echo "$raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  if [ "${#raw}" -ne 40 ]; then
+    echo "$raw"
+    return
+  fi
+  local formatted=""
+  local i=0
+  while [ "$i" -lt 40 ]; do
+    if [ -n "$formatted" ]; then formatted="${formatted}:"; fi
+    formatted="${formatted}${raw:$i:2}"
+    i=$((i + 2))
+  done
+  echo "$formatted" | tr '[:lower:]' '[:upper:]'
+}
+
 extract_sha1() {
   grep -iE "SHA-?1" | head -5 || true
 }
@@ -28,9 +45,12 @@ if [ -n "${ANDROID_HOME:-}" ]; then
       echo "$APKSIGNER_OUT"
       if echo "$APKSIGNER_OUT" | grep -qiE "SHA-?1"; then
         FOUND=1
+        RAW_SHA1="$(echo "$APKSIGNER_OUT" | grep -i "SHA-1 digest" | head -1 | grep -oiE '[0-9a-f]{40}' | head -1)"
+        COLON_SHA1="$(extract_sha1_colon "$RAW_SHA1")"
         echo ""
         echo ">>> COPY THIS SHA-1 INTO GOOGLE CLOUD → SpendWise Android OAuth client <<<"
-        echo "$APKSIGNER_OUT" | extract_sha1
+        echo "SHA-1 (Google Cloud format): $COLON_SHA1"
+        echo "SHA-1 (no colons): $RAW_SHA1"
       fi
     else
       echo "$APKSIGNER_OUT"
