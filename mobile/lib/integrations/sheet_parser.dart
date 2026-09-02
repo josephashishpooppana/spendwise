@@ -27,7 +27,7 @@ class ParsedSheetTransaction {
 }
 
 class SheetParser {
-  static const _epoch = DateTime.utc(1899, 12, 30);
+  static final _epoch = DateTime.utc(1899, 12, 30);
 
   /// Parse all data rows (sheet row numbers are 1-based, first data row = 3).
   static List<ParsedSheetTransaction> parseAllRows(

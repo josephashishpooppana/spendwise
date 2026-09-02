@@ -114,10 +114,10 @@ class SheetImportService {
       final state = await db.getSyncState();
       await db.saveSyncState(
         state.copyWith(
-          exportedTransactionIds: [
+          exportedTransactionIds: {
             ...state.exportedTransactionIds,
             ...importedIds,
-          ].toSet().toList(),
+          }.toList(),
         ),
       );
 
