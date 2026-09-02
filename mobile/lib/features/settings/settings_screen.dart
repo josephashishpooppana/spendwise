@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
+import 'package:spendwise_mobile/integrations/google_sign_in_debug.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
 import 'package:spendwise_mobile/integrations/sync_scheduler.dart';
 
@@ -164,6 +165,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
   }
 
+  Future<void> _showOAuthDebugInfo() async {
+    final report = await GoogleSignInDebugReport.buildConfigReport();
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('OAuth debug info'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            report,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _signIn() async {
     setState(() => _message = null);
     try {
@@ -184,17 +209,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             'Signed in as ${account.email}. Google will ask permission for '
             'Sheets and Drive when you tap Sync now.';
       });
-    } catch (e) {
+    } catch (e, st) {
+      final configReport = await GoogleSignInDebugReport.buildConfigReport();
       setState(() {
         _message =
-            'Sign-in failed (error 10 = OAuth misconfiguration).\n\n'
-            'Checklist:\n'
-            '1. Google Cloud Android client package: com.spendwise.mobile\n'
-            '2. SHA-1 from Build APK workflow matches your keystore\n'
-            '3. GOOGLE_WEB_CLIENT_ID is set in mobile/.env or GitHub secret and APK rebuilt\n'
-            '4. Your Gmail is a test user on OAuth consent screen\n\n'
-            'Details: docs/mobile/google-setup.md\n'
-            'Raw error: $e';
+            '${GoogleSignInDebugReport.formatError(e, st)}\n\n'
+            '$configReport\n\n'
+            'Tap "OAuth debug info" anytime for this report.';
       });
     }
   }
@@ -306,6 +327,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
+            onPressed: _showOAuthDebugInfo,
+            icon: const Icon(Icons.bug_report_outlined),
+            label: const Text('OAuth debug info'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
             onPressed: () async {
               await SyncScheduler.registerDailySync();
               setState(() {
@@ -318,7 +345,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           if (_message != null) ...[
             const SizedBox(height: 12),
-            Text(_message!),
+            SelectableText(
+              _message!,
+              style: const TextStyle(fontSize: 13),
+            ),
           ],
           const Divider(height: 32),
           Text('About', style: Theme.of(context).textTheme.titleLarge),
