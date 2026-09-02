@@ -38,7 +38,7 @@ class AppShell extends StatelessWidget {
     final index = _indexForLocation(location);
 
     return Scaffold(
-      body: child,
+      body: SafeArea(child: child),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (i) => context.go(_routes[i]),

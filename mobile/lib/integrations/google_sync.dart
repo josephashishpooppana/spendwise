@@ -25,31 +25,39 @@ class PendingSheetRow {
   final String suffix;
 }
 
+/// Google Sign-In is created lazily so native code is not touched at app launch.
 class GoogleAuthService {
-  GoogleAuthService({GoogleSignIn? signIn})
-      : _signIn = signIn ??
-            GoogleSignIn(
-              scopes: _scopes,
-            );
+  GoogleAuthService({GoogleSignIn? signIn}) : _signInOverride = signIn;
 
-  final GoogleSignIn _signIn;
+  final GoogleSignIn? _signInOverride;
+  GoogleSignIn? _signIn;
 
-  GoogleSignInAccount? get currentUser => _signIn.currentUser;
+  GoogleSignIn get _client =>
+      _signInOverride ?? (_signIn ??= GoogleSignIn(scopes: _scopes));
 
-  Future<GoogleSignInAccount?> signIn() => _signIn.signIn();
+  GoogleSignInAccount? get currentUser {
+    try {
+      return _client.currentUser;
+    } catch (e) {
+      debugPrint('GoogleSignIn currentUser failed: $e');
+      return null;
+    }
+  }
 
-  Future<void> signOut() => _signIn.signOut();
+  Future<GoogleSignInAccount?> signIn() => _client.signIn();
 
-  Future<GoogleSignInAccount?> signInSilently() => _signIn.signInSilently();
+  Future<void> signOut() => _client.signOut();
+
+  Future<GoogleSignInAccount?> signInSilently() => _client.signInSilently();
 
   Future<sheets.SheetsApi?> getSheetsApi() async {
-    final client = await _signIn.authenticatedClient();
+    final client = await _client.authenticatedClient();
     if (client == null) return null;
     return sheets.SheetsApi(client);
   }
 
   Future<drive.DriveApi?> getDriveApi() async {
-    final client = await _signIn.authenticatedClient();
+    final client = await _client.authenticatedClient();
     if (client == null) return null;
     return drive.DriveApi(client);
   }
@@ -137,12 +145,12 @@ class SheetsSyncService {
     final api = await _auth.getSheetsApi();
     if (api == null) return false;
 
-    const range = 'Sheet1!A:AS';
+    final range = '$sheetTitle!A:AS';
     final request = sheets.ValueRange(values: rows);
     await api.spreadsheets.values.append(
       request,
       spreadsheetId,
-      range.replaceFirst('Sheet1', sheetTitle),
+      range,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
     );

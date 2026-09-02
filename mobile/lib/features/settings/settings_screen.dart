@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
+import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
 import 'package:spendwise_mobile/integrations/sync_scheduler.dart';
 
@@ -132,13 +133,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _signOut() async {
     await ref.read(googleAuthProvider).signOut();
-    setState(() {});
+    final db = await ref.read(databaseProvider.future);
+    final state = await db.getSyncState();
+    await db.saveSyncState(
+      SyncStateModel(
+        lastSyncedAt: state.lastSyncedAt,
+        exportedTransactionIds: state.exportedTransactionIds,
+        driveFolderId: state.driveFolderId,
+        sheetId: state.sheetId,
+        sheetGid: state.sheetGid,
+        sheetName: state.sheetName,
+      ),
+    );
+    ref.invalidate(syncStateProvider);
+    setState(() => _message = 'Signed out.');
   }
 
   @override
   Widget build(BuildContext context) {
     final syncStateAsync = ref.watch(syncStateProvider);
-    final auth = ref.watch(googleAuthProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -154,10 +167,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             style: TextStyle(fontSize: 13, color: Colors.grey),
           ),
           const SizedBox(height: 12),
-          ListTile(
-            leading: const Icon(Icons.account_circle),
-            title: Text(auth.currentUser?.email ?? 'Not signed in'),
-            subtitle: const Text('Used for Drive backup and Sheets update'),
+          syncStateAsync.when(
+            loading: () => const ListTile(
+              leading: Icon(Icons.account_circle),
+              title: Text('Loading…'),
+            ),
+            error: (e, _) => ListTile(
+              leading: const Icon(Icons.error_outline),
+              title: Text('Error: $e'),
+            ),
+            data: (state) => ListTile(
+              leading: const Icon(Icons.account_circle),
+              title: Text(state.googleAccountEmail ?? 'Not signed in'),
+              subtitle: const Text('Used for Drive backup and Sheets update'),
+            ),
           ),
           Row(
             children: [
@@ -204,15 +227,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () async {
-              final ok = await SyncScheduler.registerDailySync();
+              await SyncScheduler.registerDailySync();
               setState(() {
-                _message = ok
-                    ? 'Daily background sync enabled.'
-                    : 'Could not enable background sync on this device.';
+                _message =
+                    'Use Sync now when you open the app. Automatic background sync is not enabled on this build.';
               });
             },
             icon: const Icon(Icons.schedule),
-            label: const Text('Enable daily background sync'),
+            label: const Text('Daily sync reminder'),
           ),
           if (_message != null) ...[
             const SizedBox(height: 12),

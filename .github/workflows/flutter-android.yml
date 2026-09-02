@@ -41,6 +41,7 @@ jobs:
             --project-name spendwise_mobile
           cp -r _flutter_scaffold/android .
           rm -rf _flutter_scaffold
+          bash scripts/patch-android-after-create.sh
           test -f android/settings.gradle.kts
           echo "Android scaffold ready ($(grep -E 'com.android.application|dev.flutter.flutter-plugin-loader' android/settings.gradle.kts))"
 

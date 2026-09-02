@@ -12,9 +12,20 @@ class AppDatabase {
   final Database _db;
 
   static AppDatabase? _instance;
+  static Future<AppDatabase>? _opening;
 
   static Future<AppDatabase> open({String? path}) async {
     if (_instance != null) return _instance!;
+    _opening ??= _openOnce(path);
+    try {
+      return await _opening!;
+    } catch (e) {
+      _opening = null;
+      rethrow;
+    }
+  }
+
+  static Future<AppDatabase> _openOnce(String? path) async {
     final dbPath = path ?? p.join(await getDatabasesPath(), 'spendwise.db');
     final db = await openDatabase(
       dbPath,

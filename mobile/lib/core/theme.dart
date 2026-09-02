@@ -17,15 +17,35 @@ class AppTheme {
 }
 
 class Formatters {
-  static final currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+  static NumberFormat? _currency;
+
+  static NumberFormat get currency {
+    _currency ??= _buildCurrencyFormatter();
+    return _currency!;
+  }
+
+  static NumberFormat _buildCurrencyFormatter() {
+    try {
+      return NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+    } catch (_) {
+      return NumberFormat.currency(symbol: '₹');
+    }
+  }
+
   static final date = DateFormat('dd MMM yyyy');
   static final dateTime = DateFormat('dd MMM yyyy, HH:mm');
 
   static String txnType(TransactionType type) =>
       type == TransactionType.income ? 'Income' : 'Expense';
 
-  static String categoryLabel(String key) =>
-      key.split('_').map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+  static String categoryLabel(String key) {
+    if (key.isEmpty) return 'Other';
+    return key
+        .split('_')
+        .where((w) => w.isNotEmpty)
+        .map((w) => '${w[0].toUpperCase()}${w.substring(1)}')
+        .join(' ');
+  }
 }
 
 const expenseCategories = [

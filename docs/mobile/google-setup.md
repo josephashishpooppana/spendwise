@@ -89,4 +89,7 @@ Your spreadsheet is already configured in the app (`Sheet1` in your Daily Expens
 
 ## App closes immediately on open
 
-If the app crashes at launch, rebuild with the latest code (Workmanager is no longer initialized at startup). Re-run **Actions → Build APK** and install the new APK.
+1. **Rebuild with the latest code** — Run **Actions → Build APK**, uninstall the old app, install the new APK.
+2. Recent fixes removed **Workmanager** (native crash on some phones), added a **startup bootstrap**, and fixed database race conditions.
+3. If you see an in-app error screen instead of a crash, note the message and share it.
+4. If it still closes with no message, check **Android Settings → Apps → SpendWise** and clear app data, then reopen.
