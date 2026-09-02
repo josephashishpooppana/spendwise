@@ -120,6 +120,40 @@ class SheetParser {
     if (iso != null) {
       return DateTime(iso.year, iso.month, iso.day);
     }
+
+    final slashParts = text.split('/');
+    if (slashParts.length == 3) {
+      final d1 = int.tryParse(slashParts[0].trim());
+      final d2 = int.tryParse(slashParts[1].trim());
+      final y = int.tryParse(slashParts[2].trim());
+      if (d1 != null && d2 != null && y != null) {
+        // Prefer DD/MM/YYYY (common in India), fall back to MM/DD/YYYY.
+        if (d1 > 12) {
+          return DateTime(y, d2, d1);
+        }
+        if (d2 > 12) {
+          return DateTime(y, d1, d2);
+        }
+        return DateTime(y, d2, d1);
+      }
+    }
+
+    final dashParts = text.split('-');
+    if (dashParts.length == 3) {
+      final d1 = int.tryParse(dashParts[0].trim());
+      final d2 = int.tryParse(dashParts[1].trim());
+      final y = int.tryParse(dashParts[2].trim());
+      if (d1 != null && d2 != null && y != null && y > 1900) {
+        if (d1 > 12) {
+          return DateTime(y, d2, d1);
+        }
+        if (d2 > 12) {
+          return DateTime(y, d1, d2);
+        }
+        return DateTime(y, d2, d1);
+      }
+    }
+
     return null;
   }
 

@@ -51,5 +51,10 @@ void main() {
       expect(date, isNotNull);
       expect(date!.month, greaterThan(0));
     });
+
+    test('parseDate reads DD/MM/YYYY strings', () {
+      final date = SheetParser.parseDate(null, '02/09/2025');
+      expect(date, DateTime(2025, 9, 2));
+    });
   });
 }

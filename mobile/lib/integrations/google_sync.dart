@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis/sheets/v4.dart' as sheets;
+import 'package:http/http.dart' as http;
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/core/google_config.dart';
+import 'package:spendwise_mobile/integrations/sheet_range.dart';
 import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 
 const _scopes = [
@@ -55,15 +57,32 @@ class GoogleAuthService {
 
   Future<GoogleSignInAccount?> signInSilently() => _client.signInSilently();
 
-  Future<sheets.SheetsApi?> getSheetsApi() async {
+  /// Ensures Sheets/Drive scopes are granted and returns an authenticated client.
+  Future<http.Client> requireAuthClient() async {
+    final granted = await _client.requestScopes(_scopes);
+    if (!granted) {
+      throw StateError(
+        'Google Sheets/Drive permission was denied. '
+        'Sign out, sign in again, and allow all requested permissions.',
+      );
+    }
+
     final client = await _client.authenticatedClient();
-    if (client == null) return null;
+    if (client == null) {
+      throw StateError(
+        'Could not connect to Google APIs. Sign out and sign in again.',
+      );
+    }
+    return client;
+  }
+
+  Future<sheets.SheetsApi> getSheetsApi() async {
+    final client = await requireAuthClient();
     return sheets.SheetsApi(client);
   }
 
-  Future<drive.DriveApi?> getDriveApi() async {
-    final client = await _client.authenticatedClient();
-    if (client == null) return null;
+  Future<drive.DriveApi> getDriveApi() async {
+    final client = await requireAuthClient();
     return drive.DriveApi(client);
   }
 }
@@ -79,8 +98,6 @@ class DriveSyncService {
     String? folderId,
   }) async {
     final api = await _auth.getDriveApi();
-    if (api == null) return null;
-
     final bytes = utf8.encode(jsonContent);
     final media = drive.Media(
       Stream.value(bytes),
@@ -101,8 +118,6 @@ class DriveSyncService {
 
   Future<String?> ensureBackupFolder() async {
     final api = await _auth.getDriveApi();
-    if (api == null) return null;
-
     const folderName = 'SpendWise Backups';
     const query =
         "mimeType='application/vnd.google-apps.folder' and name='SpendWise Backups' and trashed=false";
@@ -124,20 +139,19 @@ class SheetsSyncService {
 
   final GoogleAuthService _auth;
 
-  Future<String?> resolveSheetTitle({
+  Future<String> resolveSheetTitle({
     required String spreadsheetId,
     required String gid,
   }) async {
     final api = await _auth.getSheetsApi();
-    if (api == null) return null;
 
     final spreadsheet = await api.spreadsheets.get(spreadsheetId);
     for (final sheet in spreadsheet.sheets ?? []) {
       if ('${sheet.properties?.sheetId}' == gid) {
-        return sheet.properties?.title;
+        return sheet.properties?.title ?? '';
       }
     }
-    return spreadsheet.sheets?.first.properties?.title;
+    return spreadsheet.sheets?.first.properties?.title ?? '';
   }
 
   Future<List<List<Object?>>> readValues({
@@ -145,9 +159,12 @@ class SheetsSyncService {
     required String range,
   }) async {
     final api = await _auth.getSheetsApi();
-    if (api == null) return [];
 
-    final response = await api.spreadsheets.values.get(spreadsheetId, range);
+    final response = await api.spreadsheets.values.get(
+      spreadsheetId,
+      range,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    );
     final values = response.values;
     if (values == null) return [];
 
@@ -164,9 +181,8 @@ class SheetsSyncService {
     if (rows.isEmpty) return true;
 
     final api = await _auth.getSheetsApi();
-    if (api == null) return false;
 
-    final range = '$sheetTitle!A:AS';
+    final range = formatSheetRange(sheetTitle, 'A:AS');
     final request = sheets.ValueRange(values: rows);
     await api.spreadsheets.values.append(
       request,
@@ -220,22 +236,32 @@ class SyncService {
         return const SyncResult(success: false, message: 'Google sign-in cancelled');
       }
 
-      final folderId = driveFolderId ?? await drive.ensureBackupFolder();
-      final json = await exportJson();
-      final fileName =
-          'spendwise-backup-${DateTime.now().toIso8601String().substring(0, 10)}.json';
-      await drive.uploadBackup(
-        fileName: fileName,
-        jsonContent: json,
-        folderId: folderId,
-      );
+      String? folderId = driveFolderId;
+      String? backupNote;
+      try {
+        folderId ??= await drive.ensureBackupFolder();
+        final json = await exportJson();
+        final fileName =
+            'spendwise-backup-${DateTime.now().toIso8601String().substring(0, 10)}.json';
+        await drive.uploadBackup(
+          fileName: fileName,
+          jsonContent: json,
+          folderId: folderId,
+        );
+        backupNote = 'Drive backup saved.';
+      } catch (e) {
+        debugPrint('Drive backup skipped: $e');
+        backupNote = 'Drive backup skipped: $e';
+      }
 
       final pending = await pendingRows();
       var sheetTitle = await sheets.resolveSheetTitle(
         spreadsheetId: spreadsheetId,
         gid: sheetGid,
       );
-      sheetTitle ??= fallbackSheetName;
+      if (sheetTitle.isEmpty) {
+        sheetTitle = fallbackSheetName;
+      }
 
       final rows = pending
           .map(
@@ -255,16 +281,25 @@ class SyncService {
         );
       }
 
+      final sheetMsg = rows.isEmpty
+          ? 'No new transactions to append to $sheetTitle.'
+          : 'Appended ${rows.length} transaction(s) to $sheetTitle.';
+
       return SyncResult(
         success: true,
-        message: 'Synced ${rows.length} transaction(s) to sheet',
+        message: '$sheetMsg\n$backupNote',
         exportedCount: rows.length,
         driveFolderId: folderId,
         googleEmail: account.email,
       );
     } catch (e, st) {
       debugPrint('Sync failed: $e\n$st');
-      return SyncResult(success: false, message: 'Sync failed: $e');
+      return SyncResult(
+        success: false,
+        message: 'Sync failed: $e\n\n'
+            'Ensure your Google account has Editor access to the spreadsheet '
+            'and you allowed Sheets permission when signing in.',
+      );
     }
   }
 }

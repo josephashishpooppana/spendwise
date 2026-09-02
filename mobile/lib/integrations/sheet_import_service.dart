@@ -2,6 +2,7 @@ import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/balance_service.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
+import 'package:spendwise_mobile/integrations/sheet_range.dart';
 import 'package:spendwise_mobile/integrations/sheet_parser.dart';
 
 class SheetImportService {
@@ -33,26 +34,30 @@ class SheetImportService {
       final sheetTitle = await sheets.resolveSheetTitle(
             spreadsheetId: spreadsheetId,
             gid: sheetGid,
-          ) ??
-          fallbackSheetName;
+          );
+      final resolvedTitle =
+          sheetTitle.isNotEmpty ? sheetTitle : fallbackSheetName;
+      final range = formatSheetRange(resolvedTitle, 'A3:AS');
 
       final rows = await sheets.readValues(
         spreadsheetId: spreadsheetId,
-        range: '$sheetTitle!A3:AS',
+        range: range,
       );
 
       if (rows.isEmpty) {
-        return const SheetImportResult(
+        return SheetImportResult(
           success: false,
-          message: 'No data rows found in the sheet.',
+          message: 'No data rows found in $resolvedTitle ($range). '
+              'Check that the sheet has data from row 3 and your account has access.',
         );
       }
 
       final parsed = SheetParser.parseAllRows(rows);
       if (parsed.isEmpty) {
-        return const SheetImportResult(
+        return SheetImportResult(
           success: false,
-          message: 'No transactions could be parsed from the sheet.',
+          message: 'Read ${rows.length} row(s) from $resolvedTitle but could not '
+              'parse any transactions. Check date (column B) and amount columns.',
         );
       }
 
@@ -138,7 +143,9 @@ class SheetImportService {
     } catch (e) {
       return SheetImportResult(
         success: false,
-        message: 'Import failed: $e',
+        message: 'Import failed: $e\n\n'
+            'Sign out and sign in again, allow Sheets access, and confirm '
+            'your Google account can edit the spreadsheet.',
       );
     }
   }
