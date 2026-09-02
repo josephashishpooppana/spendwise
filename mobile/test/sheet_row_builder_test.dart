@@ -14,7 +14,7 @@ void main() {
       paymentSourceId: 's1',
       cashbackReceived: 10,
     );
-    final source = PaymentSourceModel(
+    const source = PaymentSourceModel(
       id: 's1',
       name: 'ICICI Bank',
       sourceTypeKey: 'BANK',

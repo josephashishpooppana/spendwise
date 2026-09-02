@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
-import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/cashback_service.dart';
 import 'package:spendwise_mobile/domain/services/transaction_service.dart';

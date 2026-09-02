@@ -7,7 +7,7 @@ void main() {
   group('BalanceService', () {
     test('income increases source balance', () {
       final service = BalanceService();
-      final source = PaymentSourceModel(
+      const source = PaymentSourceModel(
         id: 's1',
         name: 'ICICI Bank',
         sourceTypeKey: 'BANK',
@@ -27,7 +27,7 @@ void main() {
 
     test('expense decreases source balance', () {
       final service = BalanceService();
-      final source = PaymentSourceModel(
+      const source = PaymentSourceModel(
         id: 's1',
         name: 'ICICI Bank',
         sourceTypeKey: 'BANK',
@@ -47,13 +47,13 @@ void main() {
 
     test('debit card mirrors delta to linked bank', () {
       final service = BalanceService();
-      final bank = PaymentSourceModel(
+      const bank = PaymentSourceModel(
         id: 'bank',
         name: 'HDFC',
         sourceTypeKey: 'BANK',
         balance: 5000,
       );
-      final card = PaymentSourceModel(
+      const card = PaymentSourceModel(
         id: 'card',
         name: 'HDFC Debit',
         sourceTypeKey: 'DEBIT_CARD',

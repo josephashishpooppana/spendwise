@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:spendwise_mobile/core/providers.dart';
-import 'package:spendwise_mobile/core/theme.dart';
-import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/split_service.dart';
 import 'package:uuid/uuid.dart';
@@ -376,7 +374,7 @@ class _AddSplitScreenState extends ConsumerState<AddSplitScreen> {
 
                   await db.upsertBillSplit(split);
                   ref.invalidate(billSplitsProvider);
-                  if (mounted) context.pop();
+                  if (context.mounted) context.pop();
                 },
                 child: const Text('Save split'),
               ),

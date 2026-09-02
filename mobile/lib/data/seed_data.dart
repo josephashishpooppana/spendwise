@@ -7,7 +7,7 @@ class SeedData {
   static const _uuid = Uuid();
 
   static Future<void> seed(Database db) async {
-    final sourceTypes = [
+    const sourceTypes = [
       SourceTypeModel(id: 'st-bank', key: 'BANK', label: 'Bank Account'),
       SourceTypeModel(id: 'st-cc', key: 'CREDIT_CARD', label: 'Credit Card'),
       SourceTypeModel(id: 'st-dc', key: 'DEBIT_CARD', label: 'Debit Card'),
@@ -19,7 +19,7 @@ class SeedData {
       await db.insert('source_types', st.toMap());
     }
 
-    final methods = [
+    const methods = [
       PaymentMethodModel(
         id: 'pm-upi',
         key: 'UPI',

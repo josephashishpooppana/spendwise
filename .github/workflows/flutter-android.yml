@@ -1,33 +1,29 @@
-name: Flutter Android Build
+name: Build APK
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, master]
     paths:
       - 'mobile/**'
       - '.github/workflows/flutter-android.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'mobile/**'
-  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -35,23 +31,24 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter version
-        run: flutter --version
-
-      - name: Create Android platform files
+      - name: Create Flutter platforms
+        working-directory: ./mobile
         run: flutter create . --platforms=android --org com.spendwise
 
-      - name: Get dependencies
+      - name: Install dependencies
+        working-directory: ./mobile
         run: flutter pub get
 
       - name: Analyze
+        working-directory: ./mobile
         run: flutter analyze
 
       - name: Test
+        working-directory: ./mobile
         run: flutter test
 
       - name: Decode keystore
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        working-directory: ./mobile
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -60,46 +57,33 @@ jobs:
           fi
 
       - name: Print release SHA-1 (for Google OAuth)
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        working-directory: ./mobile
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           if [ -f android/app/release.keystore ]; then
             keytool -list -v -keystore android/app/release.keystore -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" | grep SHA1
-          else
-            echo "No release keystore configured — debug SHA-1 will be used for unsigned build"
           fi
 
       - name: Configure release signing
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: bash scripts/configure-android-signing.sh
-
-      - name: Build APK (release)
+        working-directory: ./mobile
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -f android/app/release.keystore ]; then
-            flutter build apk --release \
-              --build-name=1.0.0 \
-              --build-number=${{ github.run_number }} \
-              --dart-define=FLUTTER_BUILD_MODE=release
-          else
-            flutter build apk --release \
-              --build-name=1.0.0 \
-              --build-number=${{ github.run_number }}
+            bash scripts/configure-android-signing.sh
           fi
 
-      - name: Upload APK artifact
+      - name: Build APK
+        working-directory: ./mobile
+        run: flutter build apk --release
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: spendwise-release-apk
+          name: spendwise-apk
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 7

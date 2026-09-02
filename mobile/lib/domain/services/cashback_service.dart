@@ -88,7 +88,7 @@ class CashbackService {
         rewardPoints = entry.rewardPoints ?? 0;
     }
 
-    if (entry.kind == CashbackKind.rewardPoints && rewardPoints <= 0) {
+    if (entry.kind == CashbackKind.rewardPoints && (rewardPoints ?? 0) <= 0) {
       return null;
     }
     if (entry.kind != CashbackKind.rewardPoints && amount <= 0) {

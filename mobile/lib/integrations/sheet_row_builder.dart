@@ -63,7 +63,7 @@ class SheetRowBuilder {
 
   static double excelSerialDate(DateTime date) {
     final utc = DateTime.utc(date.year, date.month, date.day);
-    const epoch = DateTime.utc(1899, 12, 30);
+    final epoch = DateTime.utc(1899, 12, 30);
     return utc.difference(epoch).inDays.toDouble();
   }
 
