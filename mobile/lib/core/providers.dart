@@ -1,9 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
+import 'package:spendwise_mobile/domain/services/split_settlement_service.dart';
 import 'package:spendwise_mobile/domain/services/transaction_service.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
+import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
+import 'package:spendwise_mobile/integrations/sheet_export_planner.dart';
 import 'package:spendwise_mobile/integrations/sheet_import_service.dart';
+import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
 
 final databaseProvider = FutureProvider<AppDatabase>((ref) async {
   return AppDatabase.open();
@@ -56,6 +60,18 @@ final billSplitsProvider = FutureProvider<List<BillSplitModel>>((ref) async {
   return db.getBillSplits();
 });
 
+final splitSettlementsProvider =
+    FutureProvider<List<SplitSettlementModel>>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return db.getAllSplitSettlements();
+});
+
+final splitSettlementServiceProvider =
+    FutureProvider<SplitSettlementService>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return SplitSettlementService(db);
+});
+
 final syncStateProvider = FutureProvider<SyncStateModel>((ref) async {
   final db = await ref.watch(databaseProvider.future);
   return db.getSyncState();
@@ -74,13 +90,29 @@ final syncServiceProvider = Provider<SyncService>((ref) {
   );
 });
 
+final sheetColumnProvisionerProvider =
+    FutureProvider<SheetColumnProvisioner>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  final auth = ref.watch(googleAuthProvider);
+  return SheetColumnProvisioner(
+    db: db,
+    sheets: SheetsSyncService(auth),
+  );
+});
+
+final sheetSyncRegistryProvider = FutureProvider<SheetSyncRegistry>((ref) async {
+  return SheetSyncRegistry.open();
+});
+
 final sheetImportServiceProvider = FutureProvider<SheetImportService>((ref) async {
   final db = await ref.watch(databaseProvider.future);
   final auth = ref.watch(googleAuthProvider);
+  final registry = await ref.watch(sheetSyncRegistryProvider.future);
   return SheetImportService(
     auth: auth,
     sheets: SheetsSyncService(auth),
     db: db,
+    registry: registry,
   );
 });
 

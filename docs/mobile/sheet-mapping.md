@@ -44,9 +44,58 @@
 | Y | | Balance | **Formula — do not write** |
 | Z | Total Balance | — | **Formula — do not write** |
 
+## Metadata columns (AA–BA)
+
+Row 1 headers for app sync metadata. Row 2 stays blank for these columns. Data rows (from row 3) are filled by the app on sync. Template file: [Daily Expenses.xlsx](./Daily%20Expenses.xlsx).
+
+| Col | Header (row 1) | App field |
+|---|---|---|
+| AA | Transaction ID | `Transaction.id` (UUID) |
+| AB | Type | `Income` / `Expense` |
+| AC | Category | `Transaction.category` |
+| AD | Gross Amount | Full amount before cashback |
+| AE | Net Amount | Amount written to Credit/Debit column |
+| AF | Cashback | `Transaction.cashbackReceived` |
+| AG | Source ID | `PaymentSource.id` |
+| AH | Source Name | `PaymentSource.name` |
+| AI | Source Type | `BANK` / `CREDIT_CARD` / `CASH` |
+| AJ | Method ID | `PaymentMethod.id` |
+| AK | Method Name | `PaymentMethod.name` |
+| AL | App ID | `PaymentApp.id` |
+| AM | App Name | `PaymentApp.name` |
+| AN | Notes | `Transaction.notes` |
+| AO | Parent Txn ID | Cashback or split reimbursement → original expense |
+| AP | Split ID | `BillSplit.id` |
+| AQ | Split Type | `equal` / `custom` |
+| AR | Split Summary | Human-readable member shares |
+| AS | Split Settled | `Yes` / `No` |
+| AT | Split Details (IDs) | `contactId:amount\|…` |
+| AU | My Share | Payer share on split expense |
+| AV | Group ID | `Group.id` |
+| AW | Group Name | `Group.name` |
+| AX | Settlement Contact ID | On reimbursement income rows |
+| AY | Settlement Contact Name | On reimbursement income rows |
+| AZ | Updated At | ISO datetime |
+| BA | Sync Source | `app` (future: `sheet` for bidirectional sync) |
+
 ## Payment Source → Column Mapping
 
-Configure in app settings (`SheetColumnMapping`); defaults match the user's sheet:
+Each payment source stores its sheet columns in the local database (`sheet_credit_column`, `sheet_debit_column`, `sheet_balance_column`). The seven default accounts are pre-mapped to columns D–Y; metadata starts at column **AA** (index 26).
+
+### Adding a new account (automatic)
+
+When you create a new payment source in **Accounts**:
+
+1. The app inserts **3 columns** in Google Sheet immediately before the metadata block (requires Google sign-in).
+2. Row 1: account name · Row 2: Credit · Debit · Balance (or **Bill Total** for credit cards).
+3. Column letters are saved on the source — sync, import, and balances use them like existing accounts.
+4. The metadata block (Transaction ID … Sync Source) shifts right by 3 columns; the app tracks the new start index in `sync_state.metadata_start_column_index`.
+
+If Google is not signed in when you save the account, columns are created on the next **Sync now**.
+
+**Note:** Sheet summary formulas such as **Total In Bank (M)** and **Total Balance (Z)** are not rewritten automatically when new account columns are inserted. You may want to extend those formulas manually to include new bank columns.
+
+Legacy hardcoded defaults (for reference):
 
 | Payment source name (contains) | Source type | Credit col | Debit col |
 |---|---|---|---|
@@ -70,7 +119,8 @@ For each unsynced `Transaction`, produce one sheet row:
 A = weekday name (Monday, Tuesday, …)
 B = Excel serial date (days since 1899-12-30)
 C = description (+ optional split/cashback note)
-{D..AS} = empty except the matched source's Credit OR Debit cell
+{D..Z} = empty except the matched source's Credit OR Debit cell
+{AA..BA} = transaction metadata (IDs, names, split, etc.)
 ```
 
 - **EXPENSE:** write net amount (`amount - cashbackReceived`) in **Debit** column for the payment source.
@@ -79,11 +129,16 @@ C = description (+ optional split/cashback note)
 
 ## Sync Strategy
 
-1. Track exported transaction UUIDs in local `sync_state.exported_transaction_ids` (JSON array).
-2. On daily sync, query transactions where `id NOT IN exported_ids` OR `updated_at > last_sync_at`.
-3. Use Sheets API `spreadsheets.values.append` on `Sheet1!A:AS` with `INSERT_ROWS`.
-4. Resolve sheet name at runtime via `spreadsheets.get` (gid → sheet title).
-5. Never import sheet → app on sync (sync is append-only). Use **Import from Google Sheet** in Settings for a one-time full import.
+1. Local registry file `spendwise_sheet_sync.json` (beside SQLite DB) tracks each synced transaction:
+   - `sheetRowNumber` — row in Sheet1
+   - `syncedUpdatedAt` — app `updated_at` when last pushed
+2. **Sync now** (app → sheet only; sheet is not edited manually):
+   - **Append** transactions not in the registry
+   - **Update** existing sheet row when app `updated_at` is newer than `syncedUpdatedAt`
+   - **Skip** unchanged transactions already synced
+3. Uses Sheets API `append` for new rows and `batchUpdate` for changed rows (never overwrites balance/formula columns).
+4. Range: `Sheet1!A:BA` with metadata in AA–BA.
+5. **Import from Google Sheet** (sheet → app): separate action; only rows with non-empty column C (description). Missing metadata columns import as `unknown`.
 
 ## Drive Backup
 
@@ -93,10 +148,12 @@ Upload `spendwise-backup-YYYY-Www.json` (one file per ISO week) containing full 
 
 In the app: **Settings → Import from Google Sheet**
 
-- Reads all data rows from `Sheet1` starting at row 3 (`A3:AS`)
+- Reads all data rows from `Sheet1` starting at row 3 (`A3:BA`)
+- **Skips rows with empty description (column C)**
 - Each non-empty **Credit** or **Debit** cell becomes one income/expense transaction
 - Maps columns to accounts (ICICI, BOB, HDFC, credit cards, cash) per table above
-- Replaces local transactions and recalculates account balances
-- Marks imported rows so **Sync now** will not duplicate them back to the sheet
+- Metadata columns AA–BA: uses values when present; missing fields stored as `unknown`
+- Registers each imported row in `spendwise_sheet_sync.json` with sheet row number
+- **Opening balances (first import / Replace & import):** reads the **last dated row** in the sheet and sets each account balance from its **Balance** column (banks, cash) or **Bill Total** column (credit cards). These values override a transaction-sum recalculation.
 
 Requires Google sign-in (same as sync).

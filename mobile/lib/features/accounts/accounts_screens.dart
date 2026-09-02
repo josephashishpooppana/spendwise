@@ -144,6 +144,10 @@ class _PaymentSourceFormScreenState
     setState(() => _loading = true);
     final db = await ref.read(databaseProvider.future);
     final id = widget.sourceId ?? const Uuid().v4();
+    final isNew = widget.sourceId == null;
+    final existing =
+        widget.sourceId != null ? await db.getPaymentSource(widget.sourceId!) : null;
+
     await db.upsertPaymentSource(
       PaymentSourceModel(
         id: id,
@@ -153,9 +157,44 @@ class _PaymentSourceFormScreenState
         balance: double.tryParse(_balanceCtrl.text) ?? 0,
         linkedBankSourceId:
             _typeKey == 'DEBIT_CARD' ? _linkedBankId : null,
+        sheetCreditColumn: existing?.sheetCreditColumn,
+        sheetDebitColumn: existing?.sheetDebitColumn,
+        sheetBalanceColumn: existing?.sheetBalanceColumn,
       ),
     );
     ref.invalidate(paymentSourcesProvider);
+
+    if (isNew) {
+      try {
+        final syncState = await db.getSyncState();
+        final provisioner =
+            await ref.read(sheetColumnProvisionerProvider.future);
+        await provisioner.ensureForSourceId(
+          sourceId: id,
+          syncState: syncState,
+        );
+        ref.invalidate(syncStateProvider);
+        ref.invalidate(paymentSourcesProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Account saved. Google Sheet columns were added.'),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Account saved. Sign in and sync to add sheet columns: $e',
+              ),
+            ),
+          );
+        }
+      }
+    }
+
     if (mounted) context.pop();
   }
 

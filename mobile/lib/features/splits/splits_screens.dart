@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:spendwise_mobile/core/providers.dart';
+import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
+import 'package:spendwise_mobile/domain/services/split_balance_helper.dart';
 import 'package:uuid/uuid.dart';
 
 class SplitsHubScreen extends ConsumerWidget {
@@ -11,6 +13,8 @@ class SplitsHubScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final splitsAsync = ref.watch(billSplitsProvider);
+    final settlementsAsync = ref.watch(splitSettlementsProvider);
+    final txnsAsync = ref.watch(transactionsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -51,6 +55,16 @@ class SplitsHubScreen extends ConsumerWidget {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('$e')),
               data: (splits) {
+                final settlementsBySplit = <String, List<SplitSettlementModel>>{};
+                for (final s in settlementsAsync.valueOrNull ?? []) {
+                  settlementsBySplit
+                      .putIfAbsent(s.billSplitId, () => [])
+                      .add(s);
+                }
+                final txnsById = {
+                  for (final t in txnsAsync.valueOrNull ?? []) t.id: t,
+                };
+
                 if (splits.isEmpty) {
                   return const Center(
                     child: Text(
@@ -63,21 +77,38 @@ class SplitsHubScreen extends ConsumerWidget {
                   itemCount: splits.length,
                   itemBuilder: (context, i) {
                     final split = splits[i];
+                    final outstanding = SplitBalanceHelper.totalOutstanding(
+                      split: split,
+                      settlements:
+                          settlementsBySplit[split.id] ?? const [],
+                    );
+                    final txn = txnsById[split.transactionId];
+                    final title = txn?.description ??
+                        'Split on txn ${split.transactionId.substring(0, 8)}…';
+
                     return ListTile(
                       leading: Icon(
-                        split.isSettled ? Icons.check_circle : Icons.group,
+                        outstanding < 0.01
+                            ? Icons.check_circle
+                            : Icons.pending_actions,
+                        color: outstanding < 0.01
+                            ? Colors.green
+                            : Colors.orange,
                       ),
-                      title: Text(
-                        'Split on txn ${split.transactionId.substring(0, 8)}…',
-                      ),
+                      title: Text(title),
                       subtitle: Text(
-                        '${split.splitType.name} · ${split.splitDetails.length + 1} people',
+                        outstanding > 0.009
+                            ? 'To collect ${Formatters.currency.format(outstanding)} · '
+                                '${split.splitDetails.length + 1} people'
+                            : '${split.splitType.name} · ${split.splitDetails.length + 1} people',
                       ),
                       trailing: Text(
-                        split.isSettled ? 'Settled' : 'Open',
+                        outstanding < 0.01 ? 'Settled' : 'Open',
                       ),
                       onTap: () => context.push(
-                        '/transactions/${split.transactionId}/split',
+                        txn != null
+                            ? '/transactions/${split.transactionId}'
+                            : '/transactions/${split.transactionId}/split',
                       ),
                     );
                   },

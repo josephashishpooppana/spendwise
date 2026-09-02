@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
+import 'package:spendwise_mobile/domain/services/split_balance_helper.dart';
 
 class TransactionsScreen extends ConsumerStatefulWidget {
   const TransactionsScreen({super.key});
@@ -19,6 +20,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   @override
   Widget build(BuildContext context) {
     final txnsAsync = ref.watch(transactionsProvider);
+    final splitsAsync = ref.watch(billSplitsProvider);
+    final settlementsAsync = ref.watch(splitSettlementsProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Transactions')),
@@ -62,6 +65,16 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('$e')),
               data: (txns) {
+                final splitsByTxn = {
+                  for (final s in splitsAsync.valueOrNull ?? []) s.transactionId: s,
+                };
+                final settlementsBySplit = <String, List<SplitSettlementModel>>{};
+                for (final s in settlementsAsync.valueOrNull ?? []) {
+                  settlementsBySplit
+                      .putIfAbsent(s.billSplitId, () => [])
+                      .add(s);
+                }
+
                 final filtered = txns.where((t) {
                   if (_filterType != null && t.type != _filterType) {
                     return false;
@@ -82,6 +95,16 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   itemCount: filtered.length,
                   itemBuilder: (context, index) {
                     final t = filtered[index];
+                    final split = splitsByTxn[t.id];
+                    var outstanding = 0.0;
+                    if (split != null) {
+                      outstanding = SplitBalanceHelper.totalOutstanding(
+                        split: split,
+                        settlements:
+                            settlementsBySplit[split.id] ?? const [],
+                      );
+                    }
+
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundColor: t.type == TransactionType.income
@@ -98,15 +121,50 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                         ),
                       ),
                       title: Text(t.description),
-                      subtitle: Text(
-                        '${Formatters.txnType(t.type)} · ${Formatters.categoryLabel(t.category)}',
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${Formatters.txnType(t.type)} · ${Formatters.categoryLabel(t.category)}',
+                          ),
+                          if (split != null && outstanding > 0.009)
+                            Text(
+                              'To collect ${Formatters.currency.format(outstanding)}',
+                              style: TextStyle(
+                                color: Colors.orange.shade800,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            )
+                          else if (split != null && split.isSettled)
+                            const Text(
+                              'Split settled',
+                              style: TextStyle(color: Colors.green),
+                            ),
+                        ],
                       ),
-                      trailing: Text(
-                        Formatters.currency.format(
-                          t.type == TransactionType.income
-                              ? t.amount
-                              : t.netExpenseAmount,
-                        ),
+                      isThreeLine: split != null,
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            Formatters.currency.format(
+                              t.type == TransactionType.income
+                                  ? t.amount
+                                  : t.netExpenseAmount,
+                            ),
+                          ),
+                          if (split != null)
+                            Icon(
+                              outstanding < 0.01
+                                  ? Icons.check_circle
+                                  : Icons.pending_actions,
+                              size: 16,
+                              color: outstanding < 0.01
+                                  ? Colors.green
+                                  : Colors.orange,
+                            ),
+                        ],
                       ),
                       onTap: () => context.push('/transactions/${t.id}'),
                     );

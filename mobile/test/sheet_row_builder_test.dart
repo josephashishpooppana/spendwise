@@ -18,13 +18,21 @@ void main() {
       id: 's1',
       name: 'ICICI Bank',
       sourceTypeKey: 'BANK',
+      sheetCreditColumn: 'D',
+      sheetDebitColumn: 'E',
     );
 
-    final row = SheetRowBuilder.buildRow(transaction: txn, source: source);
+    final row = SheetRowBuilder.buildRow(
+      transaction: txn,
+      source: source,
+      metadataStartColumnIndex: 26,
+    );
 
+    expect(row.length, 53);
     expect(row[0], 'Monday');
     expect(row[2], 'Tea');
     expect(row[4], 90.0); // column E = debit for ICICI
+    expect(row[26], '1'); // AA = transaction id
   });
 
   test('buildRow places income credit in cash column', () {
@@ -41,9 +49,15 @@ void main() {
       id: 's1',
       name: 'Cash In Hand',
       sourceTypeKey: 'CASH',
+      sheetCreditColumn: 'W',
+      sheetDebitColumn: 'X',
     );
 
-    final row = SheetRowBuilder.buildRow(transaction: txn, source: source);
+    final row = SheetRowBuilder.buildRow(
+      transaction: txn,
+      source: source,
+      metadataStartColumnIndex: 26,
+    );
 
     expect(row[22], 500.0); // column W = credit for cash
   });

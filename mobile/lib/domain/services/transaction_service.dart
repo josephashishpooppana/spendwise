@@ -210,6 +210,17 @@ class TransactionService {
       }
     }
 
+    final split = await _db.getBillSplitForTransaction(id);
+    if (split != null) {
+      for (final settlement
+          in await _db.getSplitSettlementsForBillSplit(split.id)) {
+        await _reverseTransactionById(settlement.incomeTransactionId);
+        await _db.deleteSettlementIncomeTransaction(
+          settlement.incomeTransactionId,
+        );
+      }
+    }
+
     await _reverseTransaction(txn);
     await _db.deleteTransaction(id);
   }

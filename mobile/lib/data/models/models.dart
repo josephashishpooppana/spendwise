@@ -102,6 +102,9 @@ class PaymentSourceModel {
     this.balance = 0,
     this.linkedBankSourceId,
     this.isActive = true,
+    this.sheetCreditColumn,
+    this.sheetDebitColumn,
+    this.sheetBalanceColumn,
   });
 
   final String id;
@@ -111,6 +114,15 @@ class PaymentSourceModel {
   final double balance;
   final String? linkedBankSourceId;
   final bool isActive;
+  final String? sheetCreditColumn;
+  final String? sheetDebitColumn;
+  final String? sheetBalanceColumn;
+
+  bool get hasSheetMapping =>
+      sheetCreditColumn != null &&
+      sheetCreditColumn!.isNotEmpty &&
+      sheetDebitColumn != null &&
+      sheetDebitColumn!.isNotEmpty;
 
   Map<String, Object?> toMap() => {
         'id': id,
@@ -120,6 +132,9 @@ class PaymentSourceModel {
         'balance': balance,
         'linked_bank_source_id': linkedBankSourceId,
         'is_active': isActive ? 1 : 0,
+        'sheet_credit_column': sheetCreditColumn,
+        'sheet_debit_column': sheetDebitColumn,
+        'sheet_balance_column': sheetBalanceColumn,
       };
 
   factory PaymentSourceModel.fromMap(Map<String, Object?> map) =>
@@ -131,6 +146,9 @@ class PaymentSourceModel {
         balance: (map['balance'] as num?)?.toDouble() ?? 0,
         linkedBankSourceId: map['linked_bank_source_id'] as String?,
         isActive: (map['is_active'] as int? ?? 1) == 1,
+        sheetCreditColumn: map['sheet_credit_column'] as String?,
+        sheetDebitColumn: map['sheet_debit_column'] as String?,
+        sheetBalanceColumn: map['sheet_balance_column'] as String?,
       );
 
   PaymentSourceModel copyWith({
@@ -140,6 +158,9 @@ class PaymentSourceModel {
     double? balance,
     String? linkedBankSourceId,
     bool? isActive,
+    String? sheetCreditColumn,
+    String? sheetDebitColumn,
+    String? sheetBalanceColumn,
   }) =>
       PaymentSourceModel(
         id: id,
@@ -149,7 +170,20 @@ class PaymentSourceModel {
         balance: balance ?? this.balance,
         linkedBankSourceId: linkedBankSourceId ?? this.linkedBankSourceId,
         isActive: isActive ?? this.isActive,
+        sheetCreditColumn: sheetCreditColumn ?? this.sheetCreditColumn,
+        sheetDebitColumn: sheetDebitColumn ?? this.sheetDebitColumn,
+        sheetBalanceColumn: sheetBalanceColumn ?? this.sheetBalanceColumn,
       );
+
+  SheetColumnMapping? toSheetMapping() {
+    if (!hasSheetMapping) return null;
+    return SheetColumnMapping(
+      sourceId: id,
+      sourceNamePattern: name,
+      creditColumn: sheetCreditColumn!,
+      debitColumn: sheetDebitColumn!,
+    );
+  }
 }
 
 class PaymentAppSourceLink {
@@ -467,13 +501,56 @@ class BillSplitModel {
       );
 }
 
+class SplitSettlementModel {
+  const SplitSettlementModel({
+    required this.id,
+    required this.billSplitId,
+    required this.contactId,
+    required this.amount,
+    required this.paymentSourceId,
+    required this.incomeTransactionId,
+    required this.paidAt,
+  });
+
+  final String id;
+  final String billSplitId;
+  final String contactId;
+  final double amount;
+  final String paymentSourceId;
+  final String incomeTransactionId;
+  final DateTime paidAt;
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'bill_split_id': billSplitId,
+        'contact_id': contactId,
+        'amount': amount,
+        'payment_source_id': paymentSourceId,
+        'income_transaction_id': incomeTransactionId,
+        'paid_at': paidAt.toIso8601String(),
+      };
+
+  factory SplitSettlementModel.fromMap(Map<String, Object?> map) =>
+      SplitSettlementModel(
+        id: map['id'] as String,
+        billSplitId: map['bill_split_id'] as String,
+        contactId: map['contact_id'] as String,
+        amount: (map['amount'] as num).toDouble(),
+        paymentSourceId: map['payment_source_id'] as String,
+        incomeTransactionId: map['income_transaction_id'] as String,
+        paidAt: DateTime.parse(map['paid_at'] as String),
+      );
+}
+
 class SheetColumnMapping {
   const SheetColumnMapping({
+    this.sourceId,
     required this.sourceNamePattern,
     required this.creditColumn,
     required this.debitColumn,
   });
 
+  final String? sourceId;
   final String sourceNamePattern;
   final String creditColumn;
   final String debitColumn;
@@ -488,6 +565,7 @@ class SyncStateModel {
     this.sheetId = '1ObWgYGp928tIva0FvWZyIcFNvLRkkG0gTRHrgyQ9JbU',
     this.sheetGid = '1320698518',
     this.sheetName = 'Sheet1',
+    this.metadataStartColumnIndex = 26,
   });
 
   final DateTime? lastSyncedAt;
@@ -497,6 +575,8 @@ class SyncStateModel {
   final String sheetId;
   final String sheetGid;
   final String sheetName;
+  /// 0-based column index where metadata block (Transaction ID …) starts.
+  final int metadataStartColumnIndex;
 
   Map<String, Object?> toMap() => {
         'id': 1,
@@ -507,6 +587,7 @@ class SyncStateModel {
         'sheet_id': sheetId,
         'sheet_gid': sheetGid,
         'sheet_name': sheetName,
+        'metadata_start_column_index': metadataStartColumnIndex,
       };
 
   factory SyncStateModel.fromMap(Map<String, Object?> map) => SyncStateModel(
@@ -524,6 +605,8 @@ class SyncStateModel {
             '1ObWgYGp928tIva0FvWZyIcFNvLRkkG0gTRHrgyQ9JbU',
         sheetGid: map['sheet_gid'] as String? ?? '1320698518',
         sheetName: map['sheet_name'] as String? ?? 'Sheet1',
+        metadataStartColumnIndex:
+            map['metadata_start_column_index'] as int? ?? 26,
       );
 
   SyncStateModel copyWith({
@@ -531,6 +614,7 @@ class SyncStateModel {
     List<String>? exportedTransactionIds,
     String? driveFolderId,
     String? googleAccountEmail,
+    int? metadataStartColumnIndex,
   }) =>
       SyncStateModel(
         lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
@@ -541,5 +625,7 @@ class SyncStateModel {
         sheetId: sheetId,
         sheetGid: sheetGid,
         sheetName: sheetName,
+        metadataStartColumnIndex:
+            metadataStartColumnIndex ?? this.metadataStartColumnIndex,
       );
 }

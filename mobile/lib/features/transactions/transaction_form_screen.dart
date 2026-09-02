@@ -6,6 +6,7 @@ import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/cashback_service.dart';
+import 'package:spendwise_mobile/features/splits/split_settlement_widgets.dart';
 import 'package:spendwise_mobile/domain/services/payment_selection_filter.dart';
 import 'package:spendwise_mobile/domain/services/split_service.dart';
 import 'package:spendwise_mobile/domain/services/transaction_service.dart';
@@ -499,10 +500,30 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
   }
 }
 
-class TransactionDetailScreen extends ConsumerWidget {
+class TransactionDetailScreen extends ConsumerStatefulWidget {
   const TransactionDetailScreen({super.key, required this.transactionId});
 
   final String transactionId;
+
+  @override
+  ConsumerState<TransactionDetailScreen> createState() =>
+      _TransactionDetailScreenState();
+}
+
+class _TransactionDetailScreenState extends ConsumerState<TransactionDetailScreen> {
+  Future<_TransactionDetailData>? _detailFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  void _reload() {
+    _detailFuture =
+        ref.read(databaseProvider.future).then(_loadDetail);
+    setState(() {});
+  }
 
   static String _sourceTypeLabel(String key) {
     switch (key) {
@@ -534,9 +555,9 @@ class TransactionDetailScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     return FutureBuilder<_TransactionDetailData>(
-      future: ref.read(databaseProvider.future).then(_loadDetail),
+      future: _detailFuture,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Scaffold(
@@ -559,14 +580,14 @@ class TransactionDetailScreen extends ConsumerWidget {
               IconButton(
                 icon: const Icon(Icons.edit),
                 onPressed: () =>
-                    context.push('/transactions/$transactionId/edit'),
+                    context.push('/transactions/${widget.transactionId}/edit'),
               ),
               IconButton(
                 icon: const Icon(Icons.delete),
                 onPressed: () async {
                   final service =
                       await ref.read(transactionServiceProvider.future);
-                  await service.delete(transactionId);
+                  await service.delete(widget.transactionId);
                   ref.invalidate(transactionsProvider);
                   ref.invalidate(dashboardStatsProvider);
                   ref.invalidate(paymentSourcesProvider);
@@ -673,56 +694,19 @@ class TransactionDetailScreen extends ConsumerWidget {
                 const _SectionTitle('Bill split'),
                 if (data.group != null)
                   _DetailRow('Group', data.group!.name),
-                Card(
-                  child: Column(
-                    children: [
-                      ListTile(
-                        dense: true,
-                        title: Text(
-                          split.splitType.name == 'equal'
-                              ? 'Equal split'
-                              : 'Custom split',
-                        ),
-                        subtitle: Text(
-                          '${split.splitDetails.length + 1} people',
-                        ),
-                      ),
-                      ListTile(
-                        dense: true,
-                        title: const Text('Me'),
-                        trailing: Text(
-                          Formatters.currency.format(
-                            split.splitType == SplitType.equal
-                                ? SplitService.myEqualShare(
-                                    totalAmount: txn.amount,
-                                    contactIds:
-                                        split.splitDetails.keys.toList(),
-                                  )
-                                : (split.myShare ??
-                                    txn.amount -
-                                        split.splitDetails.values
-                                            .fold(0.0, (a, b) => a + b)),
-                          ),
-                        ),
-                      ),
-                      ...split.splitDetails.entries.map(
-                        (e) => ListTile(
-                          dense: true,
-                          title: Text(
-                            contactsById[e.key]?.name ?? e.key,
-                          ),
-                          trailing: Text(Formatters.currency.format(e.value)),
-                        ),
-                      ),
-                    ],
-                  ),
+                SplitMembersSection(
+                  split: split,
+                  expense: txn,
+                  contactsById: contactsById,
+                  settlements: data.settlements,
+                  onChanged: _reload,
                 ),
               ],
               if (txn.type == TransactionType.expense) ...[
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: () =>
-                      context.push('/transactions/$transactionId/split'),
+                  onPressed: () => context
+                      .push('/transactions/${widget.transactionId}/split'),
                   icon: Icon(split != null ? Icons.edit : Icons.group_add),
                   label: Text(
                     split != null ? 'Edit bill split' : 'Add bill split',
@@ -737,7 +721,7 @@ class TransactionDetailScreen extends ConsumerWidget {
   }
 
   Future<_TransactionDetailData> _loadDetail(AppDatabase db) async {
-    final txn = await db.getTransaction(transactionId);
+    final txn = await db.getTransaction(widget.transactionId);
     if (txn == null) {
       return const _TransactionDetailData();
     }
@@ -751,9 +735,13 @@ class TransactionDetailScreen extends ConsumerWidget {
     final app = txn.paymentAppId == null
         ? null
         : apps.where((a) => a.id == txn.paymentAppId).firstOrNull;
-    final split = await db.getBillSplitForTransaction(transactionId);
+    final split = await db.getBillSplitForTransaction(widget.transactionId);
     final contacts = await db.getContacts();
-    final cashbacks = await db.getCashbacksForTransaction(transactionId);
+    final cashbacks = await db.getCashbacksForTransaction(widget.transactionId);
+    List<SplitSettlementModel> settlements = [];
+    if (split != null) {
+      settlements = await db.getSplitSettlementsForBillSplit(split.id);
+    }
     GroupModel? group;
     if (split?.groupId != null) {
       final groups = await db.getGroups();
@@ -769,6 +757,7 @@ class TransactionDetailScreen extends ConsumerWidget {
       group: group,
       contacts: contacts,
       cashbacks: cashbacks,
+      settlements: settlements,
     );
   }
 }
@@ -783,6 +772,7 @@ class _TransactionDetailData {
     this.group,
     this.contacts = const [],
     this.cashbacks = const [],
+    this.settlements = const [],
   });
 
   final TransactionModel? transaction;
@@ -793,6 +783,7 @@ class _TransactionDetailData {
   final GroupModel? group;
   final List<ContactModel> contacts;
   final List<CashbackModel> cashbacks;
+  final List<SplitSettlementModel> settlements;
 }
 
 class _SectionTitle extends StatelessWidget {

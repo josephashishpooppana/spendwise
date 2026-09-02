@@ -3,9 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spendwise_mobile/core/providers.dart';
 import 'package:spendwise_mobile/core/theme.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
-import 'package:spendwise_mobile/domain/services/split_service.dart';
 import 'package:spendwise_mobile/integrations/google_sign_in_debug.dart';
-import 'package:spendwise_mobile/integrations/google_sync.dart';
+import 'package:spendwise_mobile/integrations/sheet_export_planner.dart';
+import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 import 'package:spendwise_mobile/integrations/sync_scheduler.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -31,11 +31,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: const Text('Import from Google Sheet?'),
         content: Text(
           count > 0
-              ? 'This will read all rows from your Daily Expenses sheet (Sheet1) '
+              ? 'This will read rows from your Daily Expenses sheet (Sheet1) '
                   'and replace $count local transaction(s).\n\n'
-                  'Sign in with Google first if you have not already.'
-              : 'This will read all existing rows from your Daily Expenses sheet '
-                  '(Sheet1) into the app.',
+                  'Account balances and credit card bill totals will be taken '
+                  'from the last row in the sheet.\n\n'
+                  'Only rows with a description in column C are imported.'
+              : 'This will read existing rows from your Daily Expenses sheet '
+                  '(Sheet1) into the app.\n\n'
+                  'Account balances and card bill totals will be read from the '
+                  'last sheet row.\n\n'
+                  'Only rows with a description in column C are imported.',
         ),
         actions: [
           TextButton(
@@ -71,6 +76,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ref.invalidate(dashboardStatsProvider);
       ref.invalidate(paymentSourcesProvider);
       ref.invalidate(syncStateProvider);
+      ref.invalidate(sheetSyncRegistryProvider);
 
       setState(() => _message = result.message);
     } catch (e) {
@@ -88,81 +94,100 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final db = await ref.read(databaseProvider.future);
     final syncService = ref.read(syncServiceProvider);
-    final state = await db.getSyncState();
+    final registry = await ref.read(sheetSyncRegistryProvider.future);
+    var syncState = await db.getSyncState();
+    String? provisionNote;
+
+    try {
+      final provisioner = await ref.read(sheetColumnProvisionerProvider.future);
+      syncState = await provisioner.ensureAllSources(syncState: syncState);
+      ref.invalidate(paymentSourcesProvider);
+      ref.invalidate(syncStateProvider);
+    } catch (e) {
+      provisionNote = 'Sheet columns: $e';
+    }
+
     final sources = {
       for (final s in await db.getPaymentSources(all: true)) s.id: s,
     };
-    final contacts = {
-      for (final c in await db.getContacts()) c.id: c,
-    };
 
+    for (final id in syncState.exportedTransactionIds) {
+      if (registry.entryFor(id) != null) continue;
+      final txn = await db.getTransaction(id);
+      if (txn == null) continue;
+      final source = sources[txn.paymentSourceId];
+      registry.markSynced(
+        transactionId: id,
+        sheetRowNumber: 0,
+        syncedUpdatedAt: txn.updatedAt ?? txn.timestamp,
+        paymentSourceId: txn.paymentSourceId,
+        type: txn.type,
+        amountColumn: source != null
+            ? SheetRowBuilder.amountColumnFor(
+                transaction: txn,
+                source: source,
+              )
+            : '',
+      );
+    }
+    await registry.save();
+
+    final planner = SheetExportPlanner();
     final result = await syncService.syncAll(
       exportJson: db.exportAllJson,
-      spreadsheetId: state.sheetId,
-      sheetGid: state.sheetGid,
-      fallbackSheetName: state.sheetName,
-      driveFolderId: state.driveFolderId,
+      spreadsheetId: syncState.sheetId,
+      sheetGid: syncState.sheetGid,
+      fallbackSheetName: syncState.sheetName,
+      driveFolderId: syncState.driveFolderId,
+      metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      registry: registry,
       pendingRows: () async {
-        final unsynced = await db.getUnsyncedTransactions(state);
-        final rows = <PendingSheetRow>[];
-        for (final txn in unsynced) {
-          final source = sources[txn.paymentSourceId];
-          if (source == null) continue;
-          var suffix = '';
-          final split = await db.getBillSplitForTransaction(txn.id);
-          if (split != null) {
-            suffix = SplitService().formatSplitDescription(
-              split,
-              contacts,
-              totalAmount: txn.amount,
-            );
-          }
-          rows.add(PendingSheetRow(txn: txn, source: source, suffix: suffix));
-
-          if (txn.cashbackFromExpenseId != null) {
-            continue;
-          }
-          for (final cb in await db.getCashbacksForTransaction(txn.id)) {
-            if (cb.incomeTransactionId != null) {
-              final inc = await db.getTransaction(cb.incomeTransactionId!);
-              final creditSource = inc != null
-                  ? sources[inc.paymentSourceId]
-                  : null;
-              if (inc != null && creditSource != null) {
-                rows.add(
-                  PendingSheetRow(
-                    txn: inc,
-                    source: creditSource,
-                    suffix: ' [cashback]',
-                  ),
-                );
-              }
-            }
-          }
-        }
-        return rows;
+        final freshState = await db.getSyncState();
+        final sources = {
+          for (final s in await db.getPaymentSources(all: true)) s.id: s,
+        };
+        final contacts = {
+          for (final c in await db.getContacts()) c.id: c,
+        };
+        final methods = {
+          for (final m in await db.getPaymentMethods()) m.id: m,
+        };
+        final apps = {
+          for (final a in await db.getPaymentApps(all: true)) a.id: a,
+        };
+        final groups = {
+          for (final g in await db.getGroups()) g.id: g,
+        };
+        return planner.buildPendingRows(
+          db: db,
+          registry: registry,
+          sources: sources,
+          contacts: contacts,
+          methods: methods,
+          apps: apps,
+          groups: groups,
+          metadataStartColumnIndex: freshState.metadataStartColumnIndex,
+        );
       },
     );
 
     if (result.success) {
-      final exportedIds = [
-        ...state.exportedTransactionIds,
-        ...(await db.getUnsyncedTransactions(state)).map((t) => t.id),
-      ];
       await db.saveSyncState(
-        state.copyWith(
+        syncState.copyWith(
           lastSyncedAt: DateTime.now(),
-          exportedTransactionIds: exportedIds.toSet().toList(),
           driveFolderId: result.driveFolderId,
           googleAccountEmail: result.googleEmail,
         ),
       );
       ref.invalidate(syncStateProvider);
+      ref.invalidate(sheetSyncRegistryProvider);
     }
 
     setState(() {
       _syncing = false;
-      _message = result.message;
+      _message = provisionNote != null
+          ? '${result.message}\n$provisionNote'
+          : result.message;
     });
   }
 
@@ -242,6 +267,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final syncStateAsync = ref.watch(syncStateProvider);
+    final registryAsync = ref.watch(sheetSyncRegistryProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -251,9 +277,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Text('Google sync', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           const Text(
-            'Google sign-in is optional and not shown at app launch. '
-            'Tap Sign in here, then Sync now. Google will request access to '
-            'update your spreadsheet and save backups to Drive.',
+            'Sync now pushes app changes to Google Sheet only (sheet is not edited '
+            'manually). New transactions are appended; edited ones update their existing row. '
+            'Import pulls history from the sheet (description required in column C).',
             style: TextStyle(fontSize: 13, color: Colors.grey),
           ),
           const SizedBox(height: 12),
@@ -293,13 +319,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           syncStateAsync.when(
             loading: () => const CircularProgressIndicator(),
             error: (e, _) => Text('$e'),
-            data: (state) => Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Last sync: ${state.lastSyncedAt != null ? Formatters.dateTime.format(state.lastSyncedAt!) : 'Never'}'),
-                Text('Sheet: ${state.sheetName} (${state.sheetId.substring(0, 8)}…)'),
-                Text('Exported transactions: ${state.exportedTransactionIds.length}'),
-              ],
+            data: (state) => registryAsync.when(
+              loading: () => const CircularProgressIndicator(),
+              error: (e, _) => Text('$e'),
+              data: (registry) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Last sync: ${state.lastSyncedAt != null ? Formatters.dateTime.format(state.lastSyncedAt!) : 'Never'}',
+                  ),
+                  Text('Sheet: ${state.sheetName} (${state.sheetId.substring(0, 8)}…)'),
+                  Text('Sheet sync registry: ${registry.entries.length} transaction(s)'),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -355,7 +387,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Text('About', style: Theme.of(context).textTheme.titleLarge),
           const Text(
             'SpendWise stores all data locally on your device. '
-            'Sync uploads a weekly JSON backup to Google Drive (same file all week, replaced on each sync) and appends new transactions to your Google Sheet.',
+            'New accounts automatically add Credit/Debit/Balance columns to your Google Sheet. '
+            'Sync tracks each transaction in spendwise_sheet_sync.json beside the local database.',
           ),
         ],
       ),
