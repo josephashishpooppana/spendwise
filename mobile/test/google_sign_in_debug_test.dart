@@ -5,7 +5,7 @@ import 'package:spendwise_mobile/integrations/google_sign_in_debug.dart';
 void main() {
   group('GoogleSignInDebugReport', () {
     test('formatError includes PlatformException fields', () {
-      const error = PlatformException(
+      final error = PlatformException(
         code: 'sign_in_failed',
         message: 'com.google.android.gms.common.api.ApiException: 10: ',
         details: {'statusCode': 10},
@@ -20,7 +20,7 @@ void main() {
     });
 
     test('hintForPlatformException detects error 10', () {
-      const error = PlatformException(
+      final error = PlatformException(
         code: 'sign_in_failed',
         message: 'd1: 10: ',
       );
