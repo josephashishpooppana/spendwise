@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -31,9 +31,18 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create Flutter platforms
+      - name: Create Android platform (Flutter 3.47+ Gradle template)
         working-directory: ./mobile
-        run: flutter create . --platforms=android --org com.spendwise
+        run: |
+          rm -rf android _flutter_scaffold
+          flutter create _flutter_scaffold \
+            --org com.spendwise \
+            --platforms=android \
+            --project-name spendwise_mobile
+          cp -r _flutter_scaffold/android .
+          rm -rf _flutter_scaffold
+          test -f android/settings.gradle.kts
+          echo "Android scaffold ready ($(grep -E 'com.android.application|dev.flutter.flutter-plugin-loader' android/settings.gradle.kts))"
 
       - name: Install dependencies
         working-directory: ./mobile
