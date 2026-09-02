@@ -31,6 +31,16 @@ void main() {
       expect(hint, contains('DEVELOPER_ERROR'));
     });
 
+    test('clientIdKey extracts unique segment after dash', () {
+      const id =
+          '1020454676892-8m1kv1d23mmsme16909b38av1mek6ghd.apps.googleusercontent.com';
+
+      expect(
+        GoogleSignInDebugReport.clientIdKey(id),
+        '8m1kv1d23mmsme16909b38av1mek6ghd',
+      );
+    });
+
     test('maskClientId hides middle of long client id', () {
       const id =
           '1020454676892-tluhoep2nvtr78jhqvhv1s9rjo7em34g.apps.googleusercontent.com';

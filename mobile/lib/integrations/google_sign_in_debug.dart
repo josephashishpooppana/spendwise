@@ -84,9 +84,19 @@ class GoogleSignInDebugReport {
         'Built-in Web client ID: $webIdStatus';
   }
 
+  static String clientIdKey(String clientId) {
+    if (clientId.isEmpty) return '(empty)';
+    final dash = clientId.indexOf('-');
+    if (dash < 0) return clientId;
+    final dot = clientId.indexOf('.apps.googleusercontent.com');
+    if (dot <= dash) return clientId.substring(dash + 1);
+    return clientId.substring(dash + 1, dot);
+  }
+
   static Future<String> buildConfigReport() async {
     final info = await PackageInfo.fromPlatform();
     final webId = GoogleConfig.webClientId;
+    final webKey = clientIdKey(webId);
 
     return '''
 === OAuth debug info ===
@@ -96,16 +106,24 @@ Package match: ${info.packageName == GoogleConfig.androidPackageName ? 'yes' : '
 App version: ${info.version}+${info.buildNumber}
 
 Web client ID in APK: ${webId.isEmpty ? 'NOT SET' : maskClientId(webId)}
+Web client ID key: ${webKey.isEmpty ? '(empty)' : webKey}
 Web client ID length: ${webId.length} chars
 Web client ID ends with .apps.googleusercontent.com: ${webId.endsWith('.apps.googleusercontent.com')}
+
+Verify Web client key starts with: 8m1kv (SpendWise Web)
+If it starts with tluho, APK is still using the old Desktop client ID.
 
 Scopes requested:
 ${GoogleSignInDebugReport.scopes.map((s) => '• $s').join('\n')}
 
+If error 10 persists with package match + Web key 8m1kv…:
+→ SHA-1 mismatch. Compare Build APK log "Print APK signing SHA-1"
+  with Google Cloud → SpendWise Android → SHA-1 fingerprint.
+
 Google Cloud checks:
 • Android OAuth client package = com.spendwise.mobile
-• Android OAuth client SHA-1 = Print APK signing SHA-1 from Build APK workflow
-• Web OAuth client type = Web application (not Desktop/Installed)
+• Android OAuth client SHA-1 = must match Print APK signing SHA-1 exactly
+• Web OAuth client = SpendWise Web (not Android client ID)
 • Test user = same Gmail you select when signing in
 '''.trim();
   }
