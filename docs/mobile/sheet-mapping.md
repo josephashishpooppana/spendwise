@@ -132,13 +132,17 @@ C = description (+ optional split/cashback note)
 1. Local registry file `spendwise_sheet_sync.json` (beside SQLite DB) tracks each synced transaction:
    - `sheetRowNumber` — row in Sheet1
    - `syncedUpdatedAt` — app `updated_at` when last pushed
+   - `pendingDeletes` — tombstones for app-deleted rows removed on next sync
 2. **Sync now** (app → sheet only; sheet is not edited manually):
-   - **Append** transactions not in the registry
+   - **Delete** queued sheet rows first (bottom-up), then renumber registry entries
+   - **Insert** new transactions at the correct **date position** (`insertDimension` ROWS), not at sheet bottom
    - **Update** existing sheet row when app `updated_at` is newer than `syncedUpdatedAt`
+   - **Move** row when transaction date changes (delete old row + insert at new date position)
    - **Skip** unchanged transactions already synced
-3. Uses Sheets API `append` for new rows and `batchUpdate` for changed rows (never overwrites balance/formula columns).
-4. Range: `Sheet1!A:BA` with metadata in AA–BA.
-5. **Import from Google Sheet** (sheet → app): separate action; only rows with non-empty column C (description). Missing metadata columns import as `unknown`.
+3. Uses Sheets API row insert/delete for ordering, `batchUpdate` for changed rows (never overwrites balance/formula columns).
+4. Cashback income rows insert immediately below the parent expense in the same sync batch.
+5. Range: `Sheet1!A:BA` with metadata in AA–BA.
+6. **Import from Google Sheet** (sheet → app): separate action; only rows with non-empty column C (description). Missing metadata columns import as `unknown`.
 
 ## Drive Backup
 
@@ -155,6 +159,9 @@ In the app: **Settings → Import from Google Sheet**
 - **Credit and debit must be greater than zero** to import a transaction
 - Metadata columns AA–BA: uses values when present; missing fields stored as `unknown`
 - Registers each imported row in `spendwise_sheet_sync.json` with sheet row number
-- **Opening balances (first import / Replace & import):** reads the **last dated row** in the sheet and sets each account balance from its **Balance** column (banks, cash) or **Bill Total** column (credit cards). These values override a transaction-sum recalculation.
+- **Opening balances (first import / Replace & import):** for each account, reads that account’s **last qualifying row** scanning bottom-up:
+  - Balance/Bill Total cell has a numeric value, and the row has **no description (column C)** or **no credit/debit > 0** for that account (balance-only / carry-forward row)
+  - Fallback: last row with credit/debit > 0 for that account, then last row with any balance value
+  - Import message lists each account → sheet row → amount
 
 Requires Google sign-in (same as sync).

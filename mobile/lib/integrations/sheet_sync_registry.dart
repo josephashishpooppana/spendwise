@@ -56,6 +56,36 @@ class SheetSyncEntry {
       );
 }
 
+class PendingSheetDelete {
+  const PendingSheetDelete({
+    required this.transactionId,
+    required this.sheetRowNumber,
+  });
+
+  final String transactionId;
+  final int sheetRowNumber;
+
+  Map<String, dynamic> toJson() => {
+        'transactionId': transactionId,
+        'sheetRowNumber': sheetRowNumber,
+      };
+
+  factory PendingSheetDelete.fromJson(Map<String, dynamic> json) =>
+      PendingSheetDelete(
+        transactionId: json['transactionId'] as String,
+        sheetRowNumber: json['sheetRowNumber'] as int,
+      );
+
+  PendingSheetDelete copyWith({
+    String? transactionId,
+    int? sheetRowNumber,
+  }) =>
+      PendingSheetDelete(
+        transactionId: transactionId ?? this.transactionId,
+        sheetRowNumber: sheetRowNumber ?? this.sheetRowNumber,
+      );
+}
+
 enum SheetSyncAction { append, update, skip }
 
 class PlannedSheetSync {
@@ -77,6 +107,7 @@ class SheetSyncRegistry {
 
   final String _filePath;
   Map<String, SheetSyncEntry> _entries = {};
+  List<PendingSheetDelete> _pendingDeletes = [];
 
   static Future<SheetSyncRegistry> open({String? dbPath}) async {
     final base = dbPath ?? p.join(await getDatabasesPath(), 'spendwise.db');
@@ -86,6 +117,9 @@ class SheetSyncRegistry {
   }
 
   Map<String, SheetSyncEntry> get entries => Map.unmodifiable(_entries);
+
+  List<PendingSheetDelete> get pendingDeletes =>
+      List.unmodifiable(_pendingDeletes);
 
   SheetSyncEntry? entryFor(String transactionId) => _entries[transactionId];
 
@@ -126,13 +160,63 @@ class SheetSyncRegistry {
       sheetRowNumber: sheetRowNumber,
       syncedUpdatedAt: syncedUpdatedAt,
       paymentSourceId: paymentSourceId,
-      transactionType: type.name,
+      type: type.name,
       amountColumn: amountColumn,
     );
   }
 
   void remove(String transactionId) {
     _entries.remove(transactionId);
+  }
+
+  void queueSheetDelete({
+    required String transactionId,
+    required int sheetRowNumber,
+  }) {
+    if (sheetRowNumber <= 0) return;
+    final existing = _pendingDeletes.indexWhere(
+      (d) => d.transactionId == transactionId,
+    );
+    if (existing >= 0) {
+      _pendingDeletes[existing] = PendingSheetDelete(
+        transactionId: transactionId,
+        sheetRowNumber: sheetRowNumber,
+      );
+      return;
+    }
+    _pendingDeletes.add(
+      PendingSheetDelete(
+        transactionId: transactionId,
+        sheetRowNumber: sheetRowNumber,
+      ),
+    );
+  }
+
+  void clearPendingDeletes() {
+    _pendingDeletes = [];
+  }
+
+  /// Shifts registry row numbers at or after [fromRowInclusive] by [delta].
+  void shiftRowNumbers(int fromRowInclusive, int delta) {
+    if (delta == 0) return;
+
+    _entries = _entries.map((key, entry) {
+      if (entry.sheetRowNumber >= fromRowInclusive) {
+        return MapEntry(
+          key,
+          entry.copyWith(sheetRowNumber: entry.sheetRowNumber + delta),
+        );
+      }
+      return MapEntry(key, entry);
+    });
+
+    _pendingDeletes = _pendingDeletes
+        .map(
+          (d) => d.sheetRowNumber >= fromRowInclusive
+              ? d.copyWith(sheetRowNumber: d.sheetRowNumber + delta)
+              : d,
+        )
+        .toList();
   }
 
   /// Legacy rows exported before row tracking existed.
@@ -159,9 +243,10 @@ class SheetSyncRegistry {
     final file = File(_filePath);
     await file.parent.create(recursive: true);
     final payload = {
-      'version': 1,
+      'version': 2,
       'updatedAt': DateTime.now().toIso8601String(),
       'entries': _entries.map((k, v) => MapEntry(k, v.toJson())),
+      'pendingDeletes': _pendingDeletes.map((d) => d.toJson()).toList(),
     };
     await file.writeAsString(jsonEncode(payload));
   }
@@ -169,6 +254,7 @@ class SheetSyncRegistry {
   Map<String, dynamic> toExportJson() => {
         'filePath': _filePath,
         'entries': _entries.map((k, v) => MapEntry(k, v.toJson())),
+        'pendingDeletes': _pendingDeletes.map((d) => d.toJson()).toList(),
       };
 
   Future<void> _load() async {
@@ -183,8 +269,15 @@ class SheetSyncRegistry {
           SheetSyncEntry.fromJson(v as Map<String, dynamic>),
         ),
       );
+      final deletes = map['pendingDeletes'] as List<dynamic>? ?? [];
+      _pendingDeletes = deletes
+          .map(
+            (d) => PendingSheetDelete.fromJson(d as Map<String, dynamic>),
+          )
+          .toList();
     } catch (_) {
       _entries = {};
+      _pendingDeletes = [];
     }
   }
 }

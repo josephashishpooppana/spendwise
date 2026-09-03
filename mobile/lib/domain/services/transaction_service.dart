@@ -2,6 +2,7 @@ import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/balance_service.dart';
 import 'package:spendwise_mobile/domain/services/cashback_service.dart';
+import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
 import 'package:uuid/uuid.dart';
 
 class CreateTransactionInput {
@@ -199,12 +200,15 @@ class TransactionService {
     return updated;
   }
 
-  Future<void> delete(String id) async {
+  Future<void> delete(String id, {SheetSyncRegistry? sheetRegistry}) async {
     final txn = await _db.getTransaction(id);
     if (txn == null) return;
 
+    final idsToRemove = <String>[id];
+
     for (final cb in await _db.getCashbacksForTransaction(id)) {
       if (cb.incomeTransactionId != null) {
+        idsToRemove.add(cb.incomeTransactionId!);
         await _reverseTransactionById(cb.incomeTransactionId!);
         await _db.deleteTransaction(cb.incomeTransactionId!);
       }
@@ -214,11 +218,26 @@ class TransactionService {
     if (split != null) {
       for (final settlement
           in await _db.getSplitSettlementsForBillSplit(split.id)) {
+        idsToRemove.add(settlement.incomeTransactionId);
         await _reverseTransactionById(settlement.incomeTransactionId);
         await _db.deleteSettlementIncomeTransaction(
           settlement.incomeTransactionId,
         );
       }
+    }
+
+    if (sheetRegistry != null) {
+      for (final txnId in idsToRemove) {
+        final entry = sheetRegistry.entryFor(txnId);
+        if (entry != null && entry.hasSheetRow) {
+          sheetRegistry.queueSheetDelete(
+            transactionId: txnId,
+            sheetRowNumber: entry.sheetRowNumber,
+          );
+        }
+        sheetRegistry.remove(txnId);
+      }
+      await sheetRegistry.save();
     }
 
     await _reverseTransaction(txn);

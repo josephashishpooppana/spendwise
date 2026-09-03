@@ -54,5 +54,41 @@ void main() {
       ];
       expect(SheetBalanceReader.findLastDataRowIndex(rows), 0);
     });
+
+    test('per-source uses balance-only row per account', () {
+      final rows = <List<Object?>>[
+        ['Monday', 45290.0, 'Tea', '', 30.0, 1000.0],
+        ['Tuesday', 45291.0, '', '', null, 5000.0, null, null, null, null, null, null, null, null, null, 12500.0],
+      ];
+
+      const sources = [
+        PaymentSourceModel(
+          id: 'bank',
+          name: 'ICICI Bank',
+          sourceTypeKey: 'BANK',
+          sheetCreditColumn: 'D',
+          sheetDebitColumn: 'E',
+          sheetBalanceColumn: 'F',
+        ),
+        PaymentSourceModel(
+          id: 'cc',
+          name: 'Federal Bank Credit Card',
+          sourceTypeKey: 'CREDIT_CARD',
+          sheetCreditColumn: 'N',
+          sheetDebitColumn: 'O',
+          sheetBalanceColumn: 'P',
+        ),
+      ];
+
+      final perSource = SheetBalanceReader.perSourceFromSheet(
+        rows: rows,
+        sources: sources,
+      );
+
+      expect(perSource['bank']!.amount, 5000.0);
+      expect(perSource['bank']!.sheetRowNumber, 4);
+      expect(perSource['cc']!.amount, 12500.0);
+      expect(perSource['cc']!.sheetRowNumber, 4);
+    });
   });
 }

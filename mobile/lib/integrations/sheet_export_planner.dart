@@ -79,7 +79,24 @@ class SheetExportPlanner {
       }
     }
 
-    return rows;
+    return _sortPendingRows(rows);
+  }
+
+  List<PendingSheetRow> _sortPendingRows(List<PendingSheetRow> rows) {
+    final appends =
+        rows.where((r) => r.action == SheetSyncAction.append).toList();
+    final updates =
+        rows.where((r) => r.action == SheetSyncAction.update).toList();
+
+    appends.sort((a, b) {
+      final byTime = a.txn.timestamp.compareTo(b.txn.timestamp);
+      if (byTime != 0) return byTime;
+      if (b.parentTransactionId == a.txn.id) return -1;
+      if (a.parentTransactionId == b.txn.id) return 1;
+      return 0;
+    });
+
+    return [...appends, ...updates];
   }
 
   Future<PendingSheetRow> _buildRow({

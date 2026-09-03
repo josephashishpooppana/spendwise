@@ -67,4 +67,49 @@ void main() {
 
     expect(registry.plan(txn).action, SheetSyncAction.append);
   });
+
+  test('shiftRowNumbers adjusts entries and pending deletes', () {
+    final registry = SheetSyncRegistry(':memory:sheet_sync.json');
+    registry.markSynced(
+      transactionId: 't1',
+      sheetRowNumber: 10,
+      syncedUpdatedAt: DateTime(2026, 1, 1),
+      paymentSourceId: 's1',
+      type: TransactionType.expense,
+      amountColumn: 'E',
+    );
+    registry.markSynced(
+      transactionId: 't2',
+      sheetRowNumber: 12,
+      syncedUpdatedAt: DateTime(2026, 1, 1),
+      paymentSourceId: 's1',
+      type: TransactionType.expense,
+      amountColumn: 'E',
+    );
+    registry.queueSheetDelete(transactionId: 'gone', sheetRowNumber: 11);
+
+    registry.shiftRowNumbers(11, -1);
+
+    expect(registry.entryFor('t1')!.sheetRowNumber, 10);
+    expect(registry.entryFor('t2')!.sheetRowNumber, 11);
+    expect(registry.pendingDeletes.single.sheetRowNumber, 10);
+  });
+
+  test('queueSheetDelete dedupes by transaction id', () {
+    final registry = SheetSyncRegistry(':memory:sheet_sync.json');
+    registry.queueSheetDelete(transactionId: 't1', sheetRowNumber: 5);
+    registry.queueSheetDelete(transactionId: 't1', sheetRowNumber: 8);
+
+    expect(registry.pendingDeletes.length, 1);
+    expect(registry.pendingDeletes.single.sheetRowNumber, 8);
+  });
+
+  test('toExportJson includes pending deletes', () {
+    final registry = SheetSyncRegistry(':memory:sheet_sync.json');
+    registry.queueSheetDelete(transactionId: 't1', sheetRowNumber: 42);
+
+    final json = registry.toExportJson();
+    final deletes = json['pendingDeletes'] as List<dynamic>;
+    expect(deletes.single['sheetRowNumber'], 42);
+  });
 }

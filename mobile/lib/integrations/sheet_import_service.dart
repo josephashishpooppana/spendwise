@@ -344,43 +344,39 @@ class SheetImportService {
     required List<List<Object?>> rows,
     required List<PaymentSourceModel> sources,
   }) async {
-    final balances = SheetBalanceReader.fromLastSheetRow(
+    final perSource = SheetBalanceReader.perSourceFromSheet(
       rows: rows,
       sources: sources,
     );
-    if (balances.isEmpty) {
+    if (perSource.isEmpty) {
       await _recalculateBalancesFromTransactions();
-      return 'Could not read balances from the last sheet row; balances computed from imported transactions.';
+      return 'Could not read balances from the sheet; balances computed from imported transactions.';
     }
-
-    final rowIndex = SheetBalanceReader.findLastDataRowIndex(rows);
-    final sheetRow = rowIndex != null ? 3 + rowIndex : null;
 
     var applied = 0;
     for (final source in sources) {
-      final value = balances[source.id];
-      if (value == null) continue;
-      await db.updateSourceBalance(source.id, value);
+      final reading = perSource[source.id];
+      if (reading == null) continue;
+      await db.updateSourceBalance(source.id, reading.amount);
       applied++;
     }
 
     if (applied == 0) {
       await _recalculateBalancesFromTransactions();
-      return 'No account balance columns matched on the last sheet row.';
+      return 'No account balance columns matched on the sheet.';
     }
 
     final parts = <String>[];
     for (final source in sources) {
-      final value = balances[source.id];
-      if (value == null) continue;
-      if (source.sourceTypeKey == 'CREDIT_CARD') {
-        parts.add('${source.name} bill ${value.toStringAsFixed(2)}');
-      } else {
-        parts.add('${source.name} ${value.toStringAsFixed(2)}');
-      }
+      final reading = perSource[source.id];
+      if (reading == null) continue;
+      final label = source.sourceTypeKey == 'CREDIT_CARD'
+          ? '${source.name} bill'
+          : source.name;
+      parts.add('$label row ${reading.sheetRowNumber} ${reading.amount.toStringAsFixed(2)}');
     }
 
-    return 'Opening balances from sheet row ${sheetRow ?? '?'}: ${parts.join(', ')}.';
+    return 'Opening balances (per account last row): ${parts.join(', ')}.';
   }
 
   Future<void> _recalculateBalancesFromTransactions() async {

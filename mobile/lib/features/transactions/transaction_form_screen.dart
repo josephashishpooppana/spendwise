@@ -586,11 +586,17 @@ class _TransactionDetailScreenState extends ConsumerState<TransactionDetailScree
                 onPressed: () async {
                   final service =
                       await ref.read(transactionServiceProvider.future);
-                  await service.delete(widget.transactionId);
+                  final registry =
+                      await ref.read(sheetSyncRegistryProvider.future);
+                  await service.delete(
+                    widget.transactionId,
+                    sheetRegistry: registry,
+                  );
                   ref.invalidate(transactionsProvider);
                   ref.invalidate(dashboardStatsProvider);
                   ref.invalidate(paymentSourcesProvider);
                   ref.invalidate(billSplitsProvider);
+                  ref.invalidate(sheetSyncRegistryProvider);
                   if (context.mounted) context.pop();
                 },
               ),
