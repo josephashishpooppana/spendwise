@@ -5,8 +5,8 @@ void main() {
   group('SheetRowInserter', () {
     test('inserts before first later-dated row', () {
       final rows = <List<Object?>>[
-        ['Monday', 45290.0, 'Tea'],
-        ['Wednesday', 45292.0, 'Lunch'],
+        ['Monday', DateTime(2026, 1, 1), 'Tea'],
+        ['Wednesday', DateTime(2026, 1, 3), 'Lunch'],
       ];
 
       final target = SheetRowInserter.targetInsertRow(
@@ -19,8 +19,8 @@ void main() {
 
     test('inserts after last row when date is newest', () {
       final rows = <List<Object?>>[
-        ['Monday', 45290.0, 'Tea'],
-        ['Tuesday', 45291.0, 'Lunch'],
+        ['Monday', DateTime(2026, 1, 1), 'Tea'],
+        ['Tuesday', DateTime(2026, 1, 2), 'Lunch'],
       ];
 
       final target = SheetRowInserter.targetInsertRow(
@@ -43,8 +43,8 @@ void main() {
 
     test('placeholder insert shifts later targets', () {
       final rows = <List<Object?>>[
-        ['Monday', 45290.0, 'Tea'],
-        ['Wednesday', 45292.0, 'Lunch'],
+        ['Monday', DateTime(2026, 1, 1), 'Tea'],
+        ['Wednesday', DateTime(2026, 1, 3), 'Lunch'],
       ];
       final snapshot = rows.map((r) => List<Object?>.from(r)).toList();
 
