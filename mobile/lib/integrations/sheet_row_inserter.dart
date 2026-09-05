@@ -1,4 +1,5 @@
 import 'package:spendwise_mobile/integrations/sheet_parser.dart';
+import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 
 /// Computes 1-based sheet row numbers for chronological insertion.
 class SheetRowInserter {
@@ -33,14 +34,39 @@ class SheetRowInserter {
   }
 
   /// Inserts a placeholder row into a local snapshot (for batch insert planning).
+  /// When [txnDate] is set, column A/B are filled so later inserts respect order.
   static void insertPlaceholderRowAt(
     List<List<Object?>> sheetRows,
     int targetSheetRowNumber, {
+    DateTime? txnDate,
     int firstDataRowNumber = defaultFirstDataRowNumber,
   }) {
     final index = targetSheetRowNumber - firstDataRowNumber;
     if (index < 0 || index > sheetRows.length) return;
-    sheetRows.insert(index, const []);
+
+    if (txnDate == null) {
+      sheetRows.insert(index, const []);
+      return;
+    }
+
+    sheetRows.insert(index, _datePlaceholderRow(txnDate));
+  }
+
+  static List<Object?> _datePlaceholderRow(DateTime date) {
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    return [
+      weekdays[date.weekday - 1],
+      SheetRowBuilder.excelSerialDate(date),
+      '',
+    ];
   }
 
   /// Removes a row from a local snapshot (for batch move/delete planning).

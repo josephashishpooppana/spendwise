@@ -572,10 +572,18 @@ class SyncService {
             }
             planned.add(_PlannedInsert(row: p, targetRow: target));
             parentTargets[p.txn.id] = target;
-            SheetRowInserter.insertPlaceholderRowAt(snapshot, target);
+            SheetRowInserter.insertPlaceholderRowAt(
+              snapshot,
+              target,
+              txnDate: p.txn.timestamp,
+            );
           }
 
-          planned.sort((a, b) => b.targetRow.compareTo(a.targetRow));
+          planned.sort((a, b) {
+            final byRow = b.targetRow.compareTo(a.targetRow);
+            if (byRow != 0) return byRow;
+            return b.row.txn.timestamp.compareTo(a.row.txn.timestamp);
+          });
 
           for (final plan in planned) {
             await sheets.insertRowsAt(
@@ -606,7 +614,10 @@ class SyncService {
         } catch (e) {
           debugPrint('Chronological insert failed, falling back to append: $e');
           usedAppendFallback = true;
-          final appendRows = toAppend.map((p) => p.buildSheetRow()).toList();
+          final sortedAppends = toAppend.toList()
+            ..sort((a, b) => a.txn.timestamp.compareTo(b.txn.timestamp));
+          final appendRows =
+              sortedAppends.map((p) => p.buildSheetRow()).toList();
           final startRow = await sheets.appendRows(
             spreadsheetId: spreadsheetId,
             sheetTitle: sheetTitle,
@@ -614,8 +625,8 @@ class SyncService {
             rangeEndColumn: rangeEnd,
           );
           if (startRow != null) {
-            for (var i = 0; i < toAppend.length; i++) {
-              final p = toAppend[i];
+            for (var i = 0; i < sortedAppends.length; i++) {
+              final p = sortedAppends[i];
               registry.markSynced(
                 transactionId: p.txn.id,
                 sheetRowNumber: startRow + i,
@@ -625,7 +636,7 @@ class SyncService {
                 amountColumn: p.amountColumn,
               );
             }
-            appended = toAppend.length;
+            appended = sortedAppends.length;
           }
         }
       }

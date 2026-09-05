@@ -52,7 +52,11 @@ void main() {
         txnDate: DateTime(2026, 1, 2),
         sheetRows: snapshot,
       );
-      SheetRowInserter.insertPlaceholderRowAt(snapshot, first);
+      SheetRowInserter.insertPlaceholderRowAt(
+        snapshot,
+        first,
+        txnDate: DateTime(2026, 1, 2),
+      );
 
       final second = SheetRowInserter.targetInsertRow(
         txnDate: DateTime(2026, 1, 4),
@@ -61,6 +65,31 @@ void main() {
 
       expect(first, 4);
       expect(second, 6);
+    });
+
+    test('yesterday then today get distinct rows when planned in order', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Older'],
+      ];
+      final snapshot = rows.map((r) => List<Object?>.from(r)).toList();
+
+      final yesterdayTarget = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 4),
+        sheetRows: snapshot,
+      );
+      SheetRowInserter.insertPlaceholderRowAt(
+        snapshot,
+        yesterdayTarget,
+        txnDate: DateTime(2026, 1, 4),
+      );
+
+      final todayTarget = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 5),
+        sheetRows: snapshot,
+      );
+
+      expect(yesterdayTarget, 4);
+      expect(todayTarget, 5);
     });
   });
 }
