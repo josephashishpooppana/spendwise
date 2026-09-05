@@ -208,7 +208,7 @@ final analyticsStatsProvider = FutureProvider<AnalyticsStats>((ref) async {
           (descriptionTotals[t.description] ?? 0) + net;
       sourceExpenseTotals[t.paymentSourceId] =
           (sourceExpenseTotals[t.paymentSourceId] ?? 0) + net;
-      if (largestExpense == null || net > largestExpense!.netExpenseAmount) {
+      if (largestExpense == null || net > largestExpense.netExpenseAmount) {
         largestExpense = t;
       }
       if (!t.timestamp.isBefore(thirtyDaysAgo)) {

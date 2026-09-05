@@ -420,11 +420,10 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                     await db.addDescriptionFavorite(text);
                     ref.invalidate(descriptionFavoritesProvider);
                     ref.invalidate(descriptionSuggestionsProvider);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Added "$text" to favorites')),
-                      );
-                    }
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Added "$text" to favorites')),
+                    );
                   },
                   icon: const Icon(Icons.add_circle_outline),
                 ),

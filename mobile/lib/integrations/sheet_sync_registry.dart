@@ -160,7 +160,7 @@ class SheetSyncRegistry {
       sheetRowNumber: sheetRowNumber,
       syncedUpdatedAt: syncedUpdatedAt,
       paymentSourceId: paymentSourceId,
-      type: type.name,
+      transactionType: type.name,
       amountColumn: amountColumn,
     );
   }
