@@ -72,6 +72,46 @@ void main() {
       expect(map['card']!.balance, 4900);
       expect(map['bank']!.balance, 4900);
     });
+
+    test('credit card expense increases bill total', () {
+      final service = BalanceService();
+      const card = PaymentSourceModel(
+        id: 'cc',
+        name: 'Federal CC',
+        sourceTypeKey: 'CREDIT_CARD',
+        balance: 10000,
+      );
+      final map = {'cc': card};
+
+      service.applyDelta(
+        source: card,
+        amount: 500,
+        type: TransactionType.expense,
+        sourcesById: map,
+      );
+
+      expect(map['cc']!.balance, 10500);
+    });
+
+    test('credit card income payment decreases bill total', () {
+      final service = BalanceService();
+      const card = PaymentSourceModel(
+        id: 'cc',
+        name: 'Federal CC',
+        sourceTypeKey: 'CREDIT_CARD',
+        balance: 10000,
+      );
+      final map = {'cc': card};
+
+      service.applyDelta(
+        source: card,
+        amount: 2000,
+        type: TransactionType.income,
+        sourcesById: map,
+      );
+
+      expect(map['cc']!.balance, 8000);
+    });
   });
 
   group('CashbackService', () {

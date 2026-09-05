@@ -15,6 +15,7 @@ class AppShell extends StatelessWidget {
   static const _routes = [
     '/',
     '/transactions',
+    '/analytics',
     '/sources',
     '/splits',
     '/settings',
@@ -22,15 +23,16 @@ class AppShell extends StatelessWidget {
 
   int _indexForLocation(String location) {
     if (location.startsWith('/transactions')) return 1;
+    if (location.startsWith('/analytics')) return 2;
     if (location.startsWith('/sources') ||
         location.startsWith('/apps') ||
         location.startsWith('/methods')) {
-      return 2;
-    }
-    if (location.startsWith('/splits') || location.startsWith('/contacts')) {
       return 3;
     }
-    if (location.startsWith('/settings')) return 4;
+    if (location.startsWith('/splits') || location.startsWith('/contacts')) {
+      return 4;
+    }
+    if (location.startsWith('/settings')) return 5;
     return 0;
   }
 
@@ -67,6 +69,11 @@ class AppShell extends StatelessWidget {
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: 'Txns',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.analytics_outlined),
+            selectedIcon: Icon(Icons.analytics),
+            label: 'Stats',
           ),
           NavigationDestination(
             icon: Icon(Icons.account_balance_wallet_outlined),
@@ -165,9 +172,10 @@ class DashboardScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 12),
               _StatCard(
-                title: 'Total balance (all accounts)',
+                title: 'Net balance',
                 value: Formatters.currency.format(stats.totalBalance),
                 color: Theme.of(context).colorScheme.primary,
+                subtitle: 'Bank + wallet + cash − credit card bills',
               ),
               const SizedBox(height: 24),
               Text(
@@ -247,11 +255,13 @@ class _StatCard extends StatelessWidget {
     required this.title,
     required this.value,
     required this.color,
+    this.subtitle,
   });
 
   final String title;
   final String value;
   final Color color;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -262,6 +272,13 @@ class _StatCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: Theme.of(context).textTheme.bodySmall),
+            if (subtitle != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                subtitle!,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
             const SizedBox(height: 8),
             Text(
               value,

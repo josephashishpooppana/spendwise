@@ -11,9 +11,17 @@ class BalanceService {
   }) {
     if (amount == 0) return source.balance;
 
-    final normalized = type == TransactionType.income
-        ? (reverse ? -amount : amount)
-        : (reverse ? amount : -amount);
+    final double normalized;
+    if (source.sourceTypeKey == 'CREDIT_CARD') {
+      // Bill owed: expense increases bill, income (payment) decreases it.
+      normalized = type == TransactionType.expense
+          ? (reverse ? -amount : amount)
+          : (reverse ? amount : -amount);
+    } else {
+      normalized = type == TransactionType.income
+          ? (reverse ? -amount : amount)
+          : (reverse ? amount : -amount);
+    }
 
     var newBalance = source.balance + normalized;
     sourcesById[source.id] = source.copyWith(balance: newBalance);

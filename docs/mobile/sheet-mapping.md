@@ -109,6 +109,22 @@ Legacy hardcoded defaults (for reference):
 
 Cashback income rows: append as separate row with description `"Cashback: {original}"`, credit to the cashback credit source column.
 
+## Credit card fields in app
+
+For `CREDIT_CARD` payment sources, the app stores:
+
+| Field | Meaning |
+|---|---|
+| Bill total (`balance`) | Amount owed on the card (matches sheet **Bill Total** column) |
+| Credit limit | Total card limit; **available credit** = limit − bill |
+| Statement day | Day of month (1–31) when the billing cycle closes |
+
+Credit on the sheet = bill payment (reduces bill). Debit on the sheet = card usage (increases bill).
+
+**Net balance** on the dashboard = bank + wallet + cash balances − credit card bill totals (debit cards excluded because they mirror linked banks).
+
+When adding an expense, payment sources are filtered to those with enough available cash or credit for the entered amount.
+
 Split metadata: append to column C suffix `[split: contact names]` or store in notes column if extended later.
 
 ## Row Export Format

@@ -94,4 +94,46 @@ void main() {
     ]);
     expect(sources.map((s) => s.id), ['src-bank']);
   });
+
+  test('sourcesWithSufficientFunds filters by available balance', () {
+    const lowBank = PaymentSourceModel(
+      id: 'src-low',
+      name: 'Low bank',
+      sourceTypeKey: 'BANK',
+      balance: 100,
+    );
+    const richBank = PaymentSourceModel(
+      id: 'src-rich',
+      name: 'Rich bank',
+      sourceTypeKey: 'BANK',
+      balance: 5000,
+    );
+
+    final sources = PaymentSelectionFilter.sourcesWithSufficientFunds(
+      allSources: [lowBank, richBank],
+      appLinks: const [],
+      sourcesById: {'src-low': lowBank, 'src-rich': richBank},
+      amount: 500,
+    );
+
+    expect(sources.map((s) => s.id), ['src-rich']);
+  });
+
+  test('credit card without limit always passes funds check', () {
+    const cc = PaymentSourceModel(
+      id: 'src-cc-open',
+      name: 'Open CC',
+      sourceTypeKey: 'CREDIT_CARD',
+      balance: 99999,
+    );
+
+    final sources = PaymentSelectionFilter.sourcesWithSufficientFunds(
+      allSources: [cc],
+      appLinks: const [],
+      sourcesById: {'src-cc-open': cc},
+      amount: 100000,
+    );
+
+    expect(sources.map((s) => s.id), ['src-cc-open']);
+  });
 }

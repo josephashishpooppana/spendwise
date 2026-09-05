@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:spendwise_mobile/features/analytics/analytics_screen.dart';
 import 'package:spendwise_mobile/features/accounts/accounts_screens.dart';
 import 'package:spendwise_mobile/features/dashboard/dashboard_screen.dart';
 import 'package:spendwise_mobile/features/settings/settings_screen.dart';
@@ -27,6 +28,10 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const TransactionsScreen(),
           ),
           GoRoute(
+            path: '/analytics',
+            builder: (context, state) => const AnalyticsScreen(),
+          ),
+          GoRoute(
             path: '/sources',
             builder: (context, state) => const AccountsHubScreen(),
           ),
@@ -42,7 +47,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/transactions/new',
-        builder: (context, state) => const TransactionFormScreen(),
+        builder: (context, state) => TransactionFormScreen(
+          cloneFromId: state.uri.queryParameters['cloneFrom'],
+        ),
       ),
       GoRoute(
         path: '/transactions/:id',

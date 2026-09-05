@@ -8,11 +8,18 @@ import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/cashback_service.dart';
 import 'package:spendwise_mobile/features/splits/split_settlement_widgets.dart';
 import 'package:spendwise_mobile/domain/services/payment_selection_filter.dart';
+import 'package:spendwise_mobile/domain/services/source_balance_calculator.dart';
 import 'package:spendwise_mobile/domain/services/transaction_service.dart';
+
 class TransactionFormScreen extends ConsumerStatefulWidget {
-  const TransactionFormScreen({super.key, this.transactionId});
+  const TransactionFormScreen({
+    super.key,
+    this.transactionId,
+    this.cloneFromId,
+  });
 
   final String? transactionId;
+  final String? cloneFromId;
 
   @override
   ConsumerState<TransactionFormScreen> createState() =>
@@ -43,9 +50,54 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
   @override
   void initState() {
     super.initState();
+    _amountCtrl.addListener(_onAmountChanged);
     if (widget.transactionId != null) {
       _loadExisting();
+    } else if (widget.cloneFromId != null) {
+      _loadClone();
     }
+  }
+
+  void _onAmountChanged() {
+    if (_type != TransactionType.expense) {
+      setState(() {});
+      return;
+    }
+    final sources = ref.read(paymentSourcesProvider).valueOrNull ?? [];
+    final appLinks = ref.read(paymentAppSourceLinksProvider).valueOrNull ?? [];
+    final methods = ref.read(paymentMethodsProvider).valueOrNull ?? [];
+    final method = _methodId == null
+        ? null
+        : methods.where((m) => m.id == _methodId).firstOrNull;
+    final filtered = PaymentSelectionFilter.sourcesWithSufficientFunds(
+      allSources: sources,
+      appLinks: appLinks,
+      sourcesById: {for (final s in sources) s.id: s},
+      appId: _appId,
+      method: method,
+      amount: double.tryParse(_amountCtrl.text) ?? 0,
+    );
+    if (!PaymentSelectionFilter.containsSourceId(filtered, _sourceId)) {
+      _sourceId = PaymentSelectionFilter.pickFirstId(filtered, (s) => s.id);
+    }
+    setState(() {});
+  }
+
+  Future<void> _loadClone() async {
+    final db = await ref.read(databaseProvider.future);
+    final txn = await db.getTransaction(widget.cloneFromId!);
+    if (txn == null || !mounted) return;
+    setState(() {
+      _type = txn.type;
+      _amountCtrl.text = txn.amount.toString();
+      _descCtrl.text = txn.description;
+      _notesCtrl.text = txn.notes ?? '';
+      _category = txn.category;
+      _date = DateTime.now();
+      _appId = txn.paymentAppId;
+      _methodId = txn.paymentMethodId;
+      _sourceId = txn.paymentSourceId;
+    });
   }
 
   Future<void> _loadExisting() async {
@@ -139,7 +191,9 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
 
       ref.invalidate(transactionsProvider);
       ref.invalidate(dashboardStatsProvider);
+      ref.invalidate(analyticsStatsProvider);
       ref.invalidate(paymentSourcesProvider);
+      ref.invalidate(descriptionSuggestionsProvider);
       if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
@@ -180,11 +234,13 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
         ? null
         : methods.where((m) => m.id == methodId).firstOrNull;
 
-    final filteredSources = PaymentSelectionFilter.sourcesForExpense(
+    final filteredSources = PaymentSelectionFilter.sourcesWithSufficientFunds(
       allSources: sources,
       appLinks: appLinks,
+      sourcesById: {for (final s in sources) s.id: s},
       appId: appId,
       method: method,
+      amount: double.tryParse(_amountCtrl.text) ?? 0,
     );
 
     var sourceId = _sourceId;
@@ -211,11 +267,13 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
         ? null
         : methods.where((m) => m.id == methodId).firstOrNull;
 
-    final filteredSources = PaymentSelectionFilter.sourcesForExpense(
+    final filteredSources = PaymentSelectionFilter.sourcesWithSufficientFunds(
       allSources: sources,
       appLinks: appLinks,
+      sourcesById: {for (final s in sources) s.id: s},
       appId: _appId,
       method: method,
+      amount: double.tryParse(_amountCtrl.text) ?? 0,
     );
 
     var sourceId = _sourceId;
@@ -261,11 +319,13 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
 
     final filteredSources = _type == TransactionType.income
         ? PaymentSelectionFilter.sourcesForIncome(allSources)
-        : PaymentSelectionFilter.sourcesForExpense(
+        : PaymentSelectionFilter.sourcesWithSufficientFunds(
             allSources: allSources,
             appLinks: appLinks,
+            sourcesById: {for (final s in allSources) s.id: s},
             appId: _appId,
             method: selectedMethod,
+            amount: double.tryParse(_amountCtrl.text) ?? 0,
           );
 
     return Scaffold(
@@ -340,11 +400,38 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
               onChanged: (v) => setState(() => _category = v ?? _category),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _descCtrl,
-              decoration: const InputDecoration(labelText: 'Description'),
-              validator: (v) =>
-                  (v ?? '').trim().isEmpty ? 'Required' : null,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _descCtrl,
+                    decoration: const InputDecoration(labelText: 'Description'),
+                    validator: (v) =>
+                        (v ?? '').trim().isEmpty ? 'Required' : null,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Save to favorites',
+                  onPressed: () async {
+                    final text = _descCtrl.text.trim();
+                    if (text.isEmpty) return;
+                    final db = await ref.read(databaseProvider.future);
+                    await db.addDescriptionFavorite(text);
+                    ref.invalidate(descriptionFavoritesProvider);
+                    ref.invalidate(descriptionSuggestionsProvider);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Added "$text" to favorites')),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.add_circle_outline),
+                ),
+              ],
+            ),
+            _DescriptionChips(
+              onSelected: (text) => setState(() => _descCtrl.text = text),
             ),
             const SizedBox(height: 12),
             ListTile(
@@ -428,7 +515,7 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                         (s) => DropdownMenuItem(
                           value: s.id,
                           child: Text(
-                            '${s.name} (${Formatters.currency.format(s.balance)})',
+                            '${s.name} (${SourceBalanceCalculator.availableLabel(s)})',
                           ),
                         ),
                       )
@@ -577,6 +664,13 @@ class _TransactionDetailScreenState extends ConsumerState<TransactionDetailScree
             title: const Text('Transaction'),
             actions: [
               IconButton(
+                icon: const Icon(Icons.copy),
+                tooltip: 'Clone',
+                onPressed: () => context.push(
+                  '/transactions/new?cloneFrom=${widget.transactionId}',
+                ),
+              ),
+              IconButton(
                 icon: const Icon(Icons.edit),
                 onPressed: () =>
                     context.push('/transactions/${widget.transactionId}/edit'),
@@ -594,6 +688,7 @@ class _TransactionDetailScreenState extends ConsumerState<TransactionDetailScree
                   );
                   ref.invalidate(transactionsProvider);
                   ref.invalidate(dashboardStatsProvider);
+                  ref.invalidate(analyticsStatsProvider);
                   ref.invalidate(paymentSourcesProvider);
                   ref.invalidate(billSplitsProvider);
                   ref.invalidate(sheetSyncRegistryProvider);
@@ -807,6 +902,58 @@ class _SectionTitle extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
       ),
+    );
+  }
+}
+
+class _DescriptionChips extends ConsumerWidget {
+  const _DescriptionChips({required this.onSelected});
+
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final favoritesAsync = ref.watch(descriptionFavoritesProvider);
+    final suggestionsAsync = ref.watch(descriptionSuggestionsProvider);
+
+    return favoritesAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (favorites) {
+        final suggestions = suggestionsAsync.valueOrNull ?? [];
+        if (favorites.isEmpty && suggestions.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final fav in favorites)
+                InputChip(
+                  label: Text(fav.text),
+                  onPressed: () => onSelected(fav.text),
+                  onDeleted: () async {
+                    final db = await ref.read(databaseProvider.future);
+                    await db.removeDescriptionFavorite(fav.id);
+                    ref.invalidate(descriptionFavoritesProvider);
+                    ref.invalidate(descriptionSuggestionsProvider);
+                  },
+                ),
+              for (final text in suggestions)
+                if (!favorites.any(
+                  (f) => f.text.toLowerCase() == text.toLowerCase(),
+                ))
+                  ActionChip(
+                    label: Text(text),
+                    onPressed: () => onSelected(text),
+                  ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

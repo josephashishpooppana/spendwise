@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/data/seed_data.dart';
+import 'package:uuid/uuid.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_letters.dart';
 
 class AppDatabase {
@@ -30,7 +31,7 @@ class AppDatabase {
     final dbPath = path ?? p.join(await getDatabasesPath(), 'spendwise.db');
     final db = await openDatabase(
       dbPath,
-      version: 4,
+      version: 5,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
@@ -68,6 +69,9 @@ class AppDatabase {
             'ALTER TABLE sync_state ADD COLUMN metadata_start_column_index INTEGER NOT NULL DEFAULT 26',
           );
           await _backfillLegacySheetColumns(database);
+        }
+        if (oldVersion < 5) {
+          await _migrateToV5(database);
         }
       },
     );
@@ -78,7 +82,7 @@ class AppDatabase {
   static Future<AppDatabase> openMemory() async {
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 4,
+      version: 5,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
@@ -116,6 +120,9 @@ class AppDatabase {
             'ALTER TABLE sync_state ADD COLUMN metadata_start_column_index INTEGER NOT NULL DEFAULT 26',
           );
           await _backfillLegacySheetColumns(database);
+        }
+        if (oldVersion < 5) {
+          await _migrateToV5(database);
         }
       },
     );
@@ -159,7 +166,16 @@ class AppDatabase {
         is_active INTEGER NOT NULL DEFAULT 1,
         sheet_credit_column TEXT,
         sheet_debit_column TEXT,
-        sheet_balance_column TEXT
+        sheet_balance_column TEXT,
+        credit_limit REAL,
+        statement_day INTEGER
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE description_favorites (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
       )
     ''');
     await db.execute('''
@@ -440,6 +456,51 @@ class AppDatabase {
     await _db.update('payment_sources', {'balance': 0});
   }
 
+  Future<List<DescriptionFavorite>> getDescriptionFavorites() async {
+    final rows = await _db.query(
+      'description_favorites',
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(DescriptionFavorite.fromMap).toList();
+  }
+
+  Future<void> addDescriptionFavorite(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    await _db.insert(
+      'description_favorites',
+      DescriptionFavorite(
+        id: const Uuid().v4(),
+        text: trimmed,
+        createdAt: DateTime.now(),
+      ).toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<void> removeDescriptionFavorite(String id) async {
+    await _db.delete(
+      'description_favorites',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<List<String>> getFrequentDescriptions({int limit = 10}) async {
+    final rows = await _db.rawQuery('''
+      SELECT description, COUNT(*) as cnt
+      FROM transactions
+      WHERE description IS NOT NULL AND TRIM(description) != ''
+      GROUP BY LOWER(TRIM(description))
+      ORDER BY cnt DESC, description ASC
+      LIMIT ?
+    ''', [limit]);
+    return rows
+        .map((r) => (r['description'] as String?)?.trim() ?? '')
+        .where((d) => d.isNotEmpty)
+        .toList();
+  }
+
   Future<void> insertTransaction(TransactionModel txn) async {
     await _db.insert(
       'transactions',
@@ -668,6 +729,22 @@ class AppDatabase {
   }) async {
     final sources = await getPaymentSources(all: all);
     return sources.where((s) => !s.hasSheetMapping).toList();
+  }
+
+  static Future<void> _migrateToV5(Database database) async {
+    await database.execute(
+      'ALTER TABLE payment_sources ADD COLUMN credit_limit REAL',
+    );
+    await database.execute(
+      'ALTER TABLE payment_sources ADD COLUMN statement_day INTEGER',
+    );
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS description_favorites (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      )
+    ''');
   }
 
   static Future<void> _backfillLegacySheetColumns(Database database) async {

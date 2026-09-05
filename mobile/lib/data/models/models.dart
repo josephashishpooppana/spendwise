@@ -105,6 +105,8 @@ class PaymentSourceModel {
     this.sheetCreditColumn,
     this.sheetDebitColumn,
     this.sheetBalanceColumn,
+    this.creditLimit,
+    this.statementDay,
   });
 
   final String id;
@@ -117,6 +119,11 @@ class PaymentSourceModel {
   final String? sheetCreditColumn;
   final String? sheetDebitColumn;
   final String? sheetBalanceColumn;
+  final double? creditLimit;
+  final int? statementDay;
+
+  double? get availableCredit =>
+      creditLimit != null ? creditLimit! - balance : null;
 
   bool get hasSheetMapping =>
       sheetCreditColumn != null &&
@@ -135,6 +142,8 @@ class PaymentSourceModel {
         'sheet_credit_column': sheetCreditColumn,
         'sheet_debit_column': sheetDebitColumn,
         'sheet_balance_column': sheetBalanceColumn,
+        'credit_limit': creditLimit,
+        'statement_day': statementDay,
       };
 
   factory PaymentSourceModel.fromMap(Map<String, Object?> map) =>
@@ -149,6 +158,8 @@ class PaymentSourceModel {
         sheetCreditColumn: map['sheet_credit_column'] as String?,
         sheetDebitColumn: map['sheet_debit_column'] as String?,
         sheetBalanceColumn: map['sheet_balance_column'] as String?,
+        creditLimit: (map['credit_limit'] as num?)?.toDouble(),
+        statementDay: map['statement_day'] as int?,
       );
 
   PaymentSourceModel copyWith({
@@ -161,6 +172,8 @@ class PaymentSourceModel {
     String? sheetCreditColumn,
     String? sheetDebitColumn,
     String? sheetBalanceColumn,
+    double? creditLimit,
+    int? statementDay,
   }) =>
       PaymentSourceModel(
         id: id,
@@ -173,6 +186,8 @@ class PaymentSourceModel {
         sheetCreditColumn: sheetCreditColumn ?? this.sheetCreditColumn,
         sheetDebitColumn: sheetDebitColumn ?? this.sheetDebitColumn,
         sheetBalanceColumn: sheetBalanceColumn ?? this.sheetBalanceColumn,
+        creditLimit: creditLimit ?? this.creditLimit,
+        statementDay: statementDay ?? this.statementDay,
       );
 
   SheetColumnMapping? toSheetMapping() {
@@ -638,5 +653,30 @@ class SyncStateModel {
         sheetName: sheetName,
         metadataStartColumnIndex:
             metadataStartColumnIndex ?? this.metadataStartColumnIndex,
+      );
+}
+
+class DescriptionFavorite {
+  const DescriptionFavorite({
+    required this.id,
+    required this.text,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String text;
+  final DateTime createdAt;
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'text': text,
+        'created_at': createdAt.toIso8601String(),
+      };
+
+  factory DescriptionFavorite.fromMap(Map<String, Object?> map) =>
+      DescriptionFavorite(
+        id: map['id'] as String,
+        text: map['text'] as String,
+        createdAt: DateTime.parse(map['created_at'] as String),
       );
 }

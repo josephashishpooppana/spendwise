@@ -51,6 +51,50 @@ class PaymentSelectionFilter {
         .toList();
   }
 
+  static List<PaymentSourceModel> sourcesWithSufficientFunds({
+    required List<PaymentSourceModel> allSources,
+    required List<PaymentAppSourceLink> appLinks,
+    required Map<String, PaymentSourceModel> sourcesById,
+    String? appId,
+    PaymentMethodModel? method,
+    required double amount,
+  }) {
+    if (amount <= 0) {
+      return sourcesForExpense(
+        allSources: allSources,
+        appLinks: appLinks,
+        appId: appId,
+        method: method,
+      );
+    }
+
+    return sourcesForExpense(
+      allSources: allSources,
+      appLinks: appLinks,
+      appId: appId,
+      method: method,
+    ).where((source) {
+      final available = _availableForExpense(source, sourcesById);
+      return available >= amount;
+    }).toList();
+  }
+
+  static double _availableForExpense(
+    PaymentSourceModel source,
+    Map<String, PaymentSourceModel> sourcesById,
+  ) {
+    switch (source.sourceTypeKey) {
+      case 'CREDIT_CARD':
+        if (source.creditLimit == null) return double.infinity;
+        return source.creditLimit! - source.balance;
+      case 'DEBIT_CARD':
+        final bank = sourcesById[source.linkedBankSourceId];
+        return bank?.balance ?? 0;
+      default:
+        return source.balance;
+    }
+  }
+
   static String? pickFirstId<T>(List<T> items, String? Function(T) idOf) {
     if (items.isEmpty) return null;
     return idOf(items.first);
