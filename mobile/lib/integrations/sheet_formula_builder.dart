@@ -66,10 +66,10 @@ class SheetFormulaBuilder {
         .toList();
     if (bankCols.isEmpty && ccCols.isEmpty) return '';
 
-    final parts = <String>[
-      ...bankCols.map((c) => '$c$rowNumber'),
-      ...ccCols.map((c) => '-$c$rowNumber'),
-    ];
-    return '=${parts.join('')}';
+    final bankPart = bankCols.map((c) => '$c$rowNumber').join('+');
+    final ccPart = ccCols.map((c) => '-$c$rowNumber').join('');
+    if (bankPart.isEmpty) return '=$ccPart';
+    if (ccPart.isEmpty) return '=$bankPart';
+    return '=$bankPart$ccPart';
   }
 }
