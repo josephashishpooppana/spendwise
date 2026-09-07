@@ -5,6 +5,7 @@ import 'package:spendwise_mobile/integrations/google_sync.dart';
 import 'package:spendwise_mobile/integrations/sheet_balance_reader.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
 import 'package:spendwise_mobile/integrations/sheet_parser.dart';
+import 'package:spendwise_mobile/integrations/sheet_range.dart';
 import 'package:spendwise_mobile/integrations/sheet_summary_columns.dart';
 import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
 import 'package:uuid/uuid.dart';
