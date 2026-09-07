@@ -3,6 +3,7 @@ import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/split_service.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_letters.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
+import 'package:spendwise_mobile/integrations/sheet_formula_builder.dart';
 import 'package:spendwise_mobile/integrations/sheet_range.dart';
 
 /// Builds Google Sheet rows from app transactions.
@@ -208,6 +209,76 @@ class SheetRowBuilder {
           ),
         );
       }
+    }
+
+    return ranges;
+  }
+
+  static List<sheets.ValueRange> buildInsertRanges({
+    required String sheetTitle,
+    required int rowNumber,
+    required List<Object?> fullRow,
+    required String amountColumn,
+    required int metadataStartColumnIndex,
+    required List<PaymentSourceModel> mappedSources,
+    required String totalInBankColumn,
+    required String totalBalanceColumn,
+  }) {
+    final ranges = buildUpdateRanges(
+      sheetTitle: sheetTitle,
+      rowNumber: rowNumber,
+      fullRow: fullRow,
+      amountColumn: amountColumn,
+      metadataStartColumnIndex: metadataStartColumnIndex,
+    );
+
+    final r = '$rowNumber';
+    for (final source in mappedSources) {
+      if (!source.hasSheetMapping) continue;
+      final formula = SheetFormulaBuilder.balanceFormula(
+        rowNumber: rowNumber,
+        source: source,
+      );
+      final col = source.sheetBalanceColumn;
+      if (formula.isEmpty || col == null || col.isEmpty) continue;
+      ranges.add(
+        sheets.ValueRange(
+          range: formatSheetRange(sheetTitle, '$col$r'),
+          values: [
+            [formula],
+          ],
+        ),
+      );
+    }
+
+    final totalInBank = SheetFormulaBuilder.totalInBankFormula(
+      rowNumber: rowNumber,
+      sources: mappedSources,
+    );
+    if (totalInBank.isNotEmpty && totalInBankColumn.isNotEmpty) {
+      ranges.add(
+        sheets.ValueRange(
+          range: formatSheetRange(sheetTitle, '$totalInBankColumn$r'),
+          values: [
+            [totalInBank],
+          ],
+        ),
+      );
+    }
+
+    final totalBalance = SheetFormulaBuilder.totalBalanceFormula(
+      rowNumber: rowNumber,
+      sources: mappedSources,
+    );
+    if (totalBalance.isNotEmpty && totalBalanceColumn.isNotEmpty) {
+      ranges.add(
+        sheets.ValueRange(
+          range: formatSheetRange(sheetTitle, '$totalBalanceColumn$r'),
+          values: [
+            [totalBalance],
+          ],
+        ),
+      );
     }
 
     return ranges;

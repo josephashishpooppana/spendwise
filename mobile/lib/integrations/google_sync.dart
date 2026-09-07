@@ -15,6 +15,7 @@ import 'package:spendwise_mobile/integrations/sheet_range.dart';
 import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
 import 'package:spendwise_mobile/integrations/sheet_row_inserter.dart';
 import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
+import 'package:spendwise_mobile/integrations/sheet_summary_columns.dart';
 
 const _scopes = [
   gsheets.SheetsApi.spreadsheetsScope,
@@ -433,6 +434,8 @@ class SyncResult {
     this.skippedCount = 0,
     this.driveFolderId,
     this.googleEmail,
+    this.totalInBankColumn,
+    this.totalBalanceColumn,
   });
 
   final bool success;
@@ -444,6 +447,8 @@ class SyncResult {
   final int skippedCount;
   final String? driveFolderId;
   final String? googleEmail;
+  final String? totalInBankColumn;
+  final String? totalBalanceColumn;
 }
 
 class _PlannedInsert {
@@ -475,6 +480,9 @@ class SyncService {
     required String sheetGid,
     required String fallbackSheetName,
     required int metadataStartColumnIndex,
+    required List<PaymentSourceModel> mappedSources,
+    String totalInBankColumn = SheetSummaryColumns.defaultTotalInBank,
+    String totalBalanceColumn = SheetSummaryColumns.defaultTotalBalance,
     String? driveFolderId,
   }) async {
     try {
@@ -505,6 +513,22 @@ class SyncService {
       );
       if (sheetTitle.isEmpty) {
         sheetTitle = fallbackSheetName;
+      }
+
+      var resolvedTotalInBank = totalInBankColumn;
+      var resolvedTotalBalance = totalBalanceColumn;
+      try {
+        final headerRows = await sheets.readValues(
+          spreadsheetId: spreadsheetId,
+          range: formatSheetRange(sheetTitle, 'A1:ZZ1'),
+        );
+        if (headerRows.isNotEmpty) {
+          final discovered = SheetSummaryColumns.discover(headerRows.first);
+          resolvedTotalInBank = discovered.totalInBank;
+          resolvedTotalBalance = discovered.totalBalance;
+        }
+      } catch (e) {
+        debugPrint('Summary column discovery skipped: $e');
       }
 
       final pending = await pendingRows();
@@ -592,12 +616,18 @@ class SyncService {
               sheetRowNumber: plan.targetRow,
             );
             registry.shiftRowNumbers(plan.targetRow, 1);
-            await sheets.writeRowAt(
+            await sheets.batchUpdateRanges(
               spreadsheetId: spreadsheetId,
-              sheetTitle: sheetTitle,
-              rowNumber: plan.targetRow,
-              row: plan.row.buildSheetRow(),
-              rangeEndColumn: rangeEnd,
+              ranges: SheetRowBuilder.buildInsertRanges(
+                sheetTitle: sheetTitle,
+                rowNumber: plan.targetRow,
+                fullRow: plan.row.buildSheetRow(),
+                amountColumn: plan.row.amountColumn,
+                metadataStartColumnIndex: metadataStartColumnIndex,
+                mappedSources: mappedSources,
+                totalInBankColumn: resolvedTotalInBank,
+                totalBalanceColumn: resolvedTotalBalance,
+              ),
             );
             registry.markSynced(
               transactionId: plan.row.txn.id,
@@ -625,6 +655,28 @@ class SyncService {
             rangeEndColumn: rangeEnd,
           );
           if (startRow != null) {
+            final insertRanges = <gsheets.ValueRange>[];
+            for (var i = 0; i < sortedAppends.length; i++) {
+              final p = sortedAppends[i];
+              insertRanges.addAll(
+                SheetRowBuilder.buildInsertRanges(
+                  sheetTitle: sheetTitle,
+                  rowNumber: startRow + i,
+                  fullRow: p.buildSheetRow(),
+                  amountColumn: p.amountColumn,
+                  metadataStartColumnIndex: metadataStartColumnIndex,
+                  mappedSources: mappedSources,
+                  totalInBankColumn: resolvedTotalInBank,
+                  totalBalanceColumn: resolvedTotalBalance,
+                ),
+              );
+            }
+            if (insertRanges.isNotEmpty) {
+              await sheets.batchUpdateRanges(
+                spreadsheetId: spreadsheetId,
+                ranges: insertRanges,
+              );
+            }
             for (var i = 0; i < sortedAppends.length; i++) {
               final p = sortedAppends[i];
               registry.markSynced(
@@ -670,12 +722,18 @@ class SyncService {
                 sheetRowNumber: target,
               );
               registry.shiftRowNumbers(target, 1);
-              await sheets.writeRowAt(
+              await sheets.batchUpdateRanges(
                 spreadsheetId: spreadsheetId,
-                sheetTitle: sheetTitle,
-                rowNumber: target,
-                row: p.buildSheetRow(),
-                rangeEndColumn: rangeEnd,
+                ranges: SheetRowBuilder.buildInsertRanges(
+                  sheetTitle: sheetTitle,
+                  rowNumber: target,
+                  fullRow: p.buildSheetRow(),
+                  amountColumn: p.amountColumn,
+                  metadataStartColumnIndex: metadataStartColumnIndex,
+                  mappedSources: mappedSources,
+                  totalInBankColumn: resolvedTotalInBank,
+                  totalBalanceColumn: resolvedTotalBalance,
+                ),
               );
               registry.markSynced(
                 transactionId: p.txn.id,
@@ -695,6 +753,19 @@ class SyncService {
                 rangeEndColumn: rangeEnd,
               );
               if (startRow != null) {
+                await sheets.batchUpdateRanges(
+                  spreadsheetId: spreadsheetId,
+                  ranges: SheetRowBuilder.buildInsertRanges(
+                    sheetTitle: sheetTitle,
+                    rowNumber: startRow,
+                    fullRow: p.buildSheetRow(),
+                    amountColumn: p.amountColumn,
+                    metadataStartColumnIndex: metadataStartColumnIndex,
+                    mappedSources: mappedSources,
+                    totalInBankColumn: resolvedTotalInBank,
+                    totalBalanceColumn: resolvedTotalBalance,
+                  ),
+                );
                 registry.markSynced(
                   transactionId: p.txn.id,
                   sheetRowNumber: startRow,
@@ -737,12 +808,18 @@ class SyncService {
             sheetRowNumber: target,
           );
           registry.shiftRowNumbers(target, 1);
-          await sheets.writeRowAt(
+          await sheets.batchUpdateRanges(
             spreadsheetId: spreadsheetId,
-            sheetTitle: sheetTitle,
-            rowNumber: target,
-            row: p.buildSheetRow(),
-            rangeEndColumn: rangeEnd,
+            ranges: SheetRowBuilder.buildInsertRanges(
+              sheetTitle: sheetTitle,
+              rowNumber: target,
+              fullRow: p.buildSheetRow(),
+              amountColumn: p.amountColumn,
+              metadataStartColumnIndex: metadataStartColumnIndex,
+              mappedSources: mappedSources,
+              totalInBankColumn: resolvedTotalInBank,
+              totalBalanceColumn: resolvedTotalBalance,
+            ),
           );
           registry.markSynced(
             transactionId: p.txn.id,
@@ -809,6 +886,8 @@ class SyncService {
         movedCount: moved,
         driveFolderId: folderId,
         googleEmail: account.email,
+        totalInBankColumn: resolvedTotalInBank,
+        totalBalanceColumn: resolvedTotalBalance,
       );
     } catch (e, st) {
       debugPrint('Sync failed: $e\n$st');

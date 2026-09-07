@@ -62,6 +62,7 @@ const expenseCategories = [
   'insurance',
   'travel',
   'personal_care',
+  'credit_card_payment',
   'other',
 ];
 

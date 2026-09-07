@@ -7,12 +7,12 @@ class SourceBalanceCalculator {
     var total = 0.0;
     for (final s in sources) {
       switch (s.sourceTypeKey) {
-        case 'DEBIT_CARD':
-          break;
+        case 'BANK':
+          total += s.balance;
         case 'CREDIT_CARD':
           total -= s.balance;
         default:
-          total += s.balance;
+          break;
       }
     }
     return total;

@@ -4,7 +4,7 @@ import 'package:spendwise_mobile/domain/services/source_balance_calculator.dart'
 
 void main() {
   group('SourceBalanceCalculator', () {
-    test('net balance adds assets and subtracts credit card bills', () {
+    test('net balance is bank balances minus credit card bills only', () {
       const sources = [
         PaymentSourceModel(
           id: 'bank',
@@ -17,6 +17,12 @@ void main() {
           name: 'Paytm',
           sourceTypeKey: 'WALLET',
           balance: 2000,
+        ),
+        PaymentSourceModel(
+          id: 'cash',
+          name: 'Cash',
+          sourceTypeKey: 'CASH',
+          balance: 500,
         ),
         PaymentSourceModel(
           id: 'cc',
@@ -33,7 +39,7 @@ void main() {
         ),
       ];
 
-      expect(SourceBalanceCalculator.netTotalBalance(sources), 40000);
+      expect(SourceBalanceCalculator.netTotalBalance(sources), 38000);
     });
 
     test('available credit uses limit minus bill', () {

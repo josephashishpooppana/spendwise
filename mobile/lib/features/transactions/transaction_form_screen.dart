@@ -37,6 +37,7 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
   String? _appId;
   String? _methodId;
   String? _sourceId;
+  String? _creditCardPaymentTargetId;
   bool _loading = false;
 
   bool _cashbackEnabled = false;
@@ -104,6 +105,12 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
     final db = await ref.read(databaseProvider.future);
     final txn = await db.getTransaction(widget.transactionId!);
     if (txn == null || !mounted) return;
+    String? ccTarget;
+    if (txn.category == 'credit_card_payment') {
+      final paired =
+          await db.findTransactionByNotes('paired:${txn.id}');
+      ccTarget = paired?.paymentSourceId;
+    }
     setState(() {
       _type = txn.type;
       _amountCtrl.text = txn.amount.toString();
@@ -114,6 +121,7 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
       _appId = txn.paymentAppId;
       _methodId = txn.paymentMethodId;
       _sourceId = txn.paymentSourceId;
+      _creditCardPaymentTargetId = ccTarget;
     });
   }
 
@@ -166,10 +174,20 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
       );
       return;
     }
+    if (_category == 'credit_card_payment' &&
+        (_creditCardPaymentTargetId == null ||
+            _creditCardPaymentTargetId!.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a credit card to pay toward')),
+      );
+      return;
+    }
 
     setState(() => _loading = true);
     try {
       final service = await ref.read(transactionServiceProvider.future);
+      final isCcPayment = _type == TransactionType.expense &&
+          _category == 'credit_card_payment';
       final input = CreateTransactionInput(
         type: _type,
         amount: double.parse(_amountCtrl.text),
@@ -177,10 +195,13 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
         description: _descCtrl.text.trim(),
         timestamp: _date,
         paymentSourceId: _sourceId!,
-        paymentMethodId: _methodId,
-        paymentAppId: _appId,
+        paymentMethodId: isCcPayment ? 'pm-transfer' : _methodId,
+        paymentAppId: isCcPayment ? null : _appId,
         notes: _notesCtrl.text.trim(),
         cashbackEntries: _cashbackEntries(),
+        creditCardPaymentTargetId: isCcPayment
+            ? _creditCardPaymentTargetId
+            : null,
       );
 
       if (widget.transactionId == null) {
@@ -319,14 +340,24 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
 
     final filteredSources = _type == TransactionType.income
         ? PaymentSelectionFilter.sourcesForIncome(allSources)
-        : PaymentSelectionFilter.sourcesWithSufficientFunds(
-            allSources: allSources,
-            appLinks: appLinks,
-            sourcesById: {for (final s in allSources) s.id: s},
-            appId: _appId,
-            method: selectedMethod,
-            amount: double.tryParse(_amountCtrl.text) ?? 0,
-          );
+        : _category == 'credit_card_payment'
+            ? allSources
+                .where((s) => s.sourceTypeKey == 'BANK')
+                .toList()
+            : PaymentSelectionFilter.sourcesWithSufficientFunds(
+                allSources: allSources,
+                appLinks: appLinks,
+                sourcesById: {for (final s in allSources) s.id: s},
+                appId: _appId,
+                method: selectedMethod,
+                amount: double.tryParse(_amountCtrl.text) ?? 0,
+              );
+
+    final creditCards = allSources
+        .where((s) => s.sourceTypeKey == 'CREDIT_CARD')
+        .toList();
+    final isCcPayment =
+        _type == TransactionType.expense && _category == 'credit_card_payment';
 
     return Scaffold(
       appBar: AppBar(
@@ -397,37 +428,19 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                     ),
                   )
                   .toList(),
-              onChanged: (v) => setState(() => _category = v ?? _category),
+              onChanged: (v) => setState(() {
+                _category = v ?? _category;
+                if (_category != 'credit_card_payment') {
+                  _creditCardPaymentTargetId = null;
+                }
+              }),
             ),
             const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _descCtrl,
-                    decoration: const InputDecoration(labelText: 'Description'),
-                    validator: (v) =>
-                        (v ?? '').trim().isEmpty ? 'Required' : null,
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Save to favorites',
-                  onPressed: () async {
-                    final text = _descCtrl.text.trim();
-                    if (text.isEmpty) return;
-                    final db = await ref.read(databaseProvider.future);
-                    await db.addDescriptionFavorite(text);
-                    ref.invalidate(descriptionFavoritesProvider);
-                    ref.invalidate(descriptionSuggestionsProvider);
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Added "$text" to favorites')),
-                    );
-                  },
-                  icon: const Icon(Icons.add_circle_outline),
-                ),
-              ],
+            TextFormField(
+              controller: _descCtrl,
+              decoration: const InputDecoration(labelText: 'Description'),
+              validator: (v) =>
+                  (v ?? '').trim().isEmpty ? 'Required' : null,
             ),
             _DescriptionChips(
               onSelected: (text) => setState(() => _descCtrl.text = text),
@@ -448,7 +461,7 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                 if (picked != null) setState(() => _date = picked);
               },
             ),
-            if (_type == TransactionType.expense) ...[
+            if (_type == TransactionType.expense && !isCcPayment) ...[
               appsAsync.when(
                 loading: () => const LinearProgressIndicator(),
                 error: (e, _) => Text('$e'),
@@ -524,13 +537,38 @@ class _TransactionFormScreenState extends ConsumerState<TransactionFormScreen> {
                 );
               },
             ),
+            if (isCcPayment) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String?>(
+                value: PaymentSelectionFilter.containsSourceId(
+                  creditCards,
+                  _creditCardPaymentTargetId,
+                )
+                    ? _creditCardPaymentTargetId
+                    : null,
+                decoration: const InputDecoration(
+                  labelText: 'Pay toward card',
+                ),
+                items: creditCards
+                    .map(
+                      (s) => DropdownMenuItem(
+                        value: s.id,
+                        child: Text(s.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) =>
+                    setState(() => _creditCardPaymentTargetId = v),
+                validator: (v) => v == null ? 'Required' : null,
+              ),
+            ],
             const SizedBox(height: 12),
             TextFormField(
               controller: _notesCtrl,
               decoration: const InputDecoration(labelText: 'Notes (optional)'),
               maxLines: 2,
             ),
-            if (_type == TransactionType.expense) ...[
+            if (_type == TransactionType.expense && !isCcPayment) ...[
               const SizedBox(height: 16),
               SwitchListTile(
                 title: const Text('Cashback / reward points'),
@@ -912,17 +950,13 @@ class _DescriptionChips extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final favoritesAsync = ref.watch(descriptionFavoritesProvider);
     final suggestionsAsync = ref.watch(descriptionSuggestionsProvider);
 
-    return favoritesAsync.when(
+    return suggestionsAsync.when(
       loading: () => const SizedBox.shrink(),
       error: (_, __) => const SizedBox.shrink(),
-      data: (favorites) {
-        final suggestions = suggestionsAsync.valueOrNull ?? [];
-        if (favorites.isEmpty && suggestions.isEmpty) {
-          return const SizedBox.shrink();
-        }
+      data: (suggestions) {
+        if (suggestions.isEmpty) return const SizedBox.shrink();
 
         return Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -930,25 +964,11 @@ class _DescriptionChips extends ConsumerWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final fav in favorites)
-                InputChip(
-                  label: Text(fav.text),
-                  onPressed: () => onSelected(fav.text),
-                  onDeleted: () async {
-                    final db = await ref.read(databaseProvider.future);
-                    await db.removeDescriptionFavorite(fav.id);
-                    ref.invalidate(descriptionFavoritesProvider);
-                    ref.invalidate(descriptionSuggestionsProvider);
-                  },
-                ),
               for (final text in suggestions)
-                if (!favorites.any(
-                  (f) => f.text.toLowerCase() == text.toLowerCase(),
-                ))
-                  ActionChip(
-                    label: Text(text),
-                    onPressed: () => onSelected(text),
-                  ),
+                ActionChip(
+                  label: Text(text),
+                  onPressed: () => onSelected(text),
+                ),
             ],
           ),
         );

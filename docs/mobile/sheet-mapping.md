@@ -11,7 +11,23 @@
 
 ## Layout Type
 
-**Running balance sheet** with per-account Credit / Debit / Balance (or Bill Total for credit cards) columns. Row 1–2 are headers; data starts at row 3. Balance and total columns use formulas — the app writes **data rows only** (Credit/Debit cells + metadata), never overwrites formula columns.
+**Running balance sheet** with per-account Credit / Debit / Balance (or Bill Total for credit cards) columns. Row 1–2 are headers; data starts at row 3. On **insert**, the app writes balance/bill formulas plus **Total In Bank** and **Total Balance** formulas; updates only touch data cells (Credit/Debit + metadata), never overwriting existing formula columns on other rows.
+
+## Balance formulas (written on insert)
+
+| Account type | Balance / Bill Total formula (row N) |
+|---|---|
+| BANK, CASH, WALLET | `=Bal(N-1)-Debit(N)+Credit(N)` |
+| CREDIT_CARD | `=Bill(N-1)+Debit(N)-Credit(N)` |
+
+Summary columns (discovered from row 1 headers, cached in `sync_state`):
+
+| Header | Default col | Formula on row N |
+|---|---|---|
+| Total In Bank | M | Sum of all **BANK** balance columns on that row |
+| Total Balance | Z | Sum of **BANK** balances − sum of **CREDIT_CARD** bill totals (cash/wallets excluded) |
+
+Credit card **credit limit** is stored in the app only — there is no sheet column.
 
 ## Column Map (Sheet1)
 
@@ -93,7 +109,7 @@ When you create a new payment source in **Accounts**:
 
 If Google is not signed in when you save the account, columns are created on the next **Sync now**.
 
-**Note:** Sheet summary formulas such as **Total In Bank (M)** and **Total Balance (Z)** are not rewritten automatically when new account columns are inserted. You may want to extend those formulas manually to include new bank columns.
+**Note:** When new account columns are inserted before metadata, **Total In Bank** and **Total Balance** formulas on **newly inserted rows** include all mapped accounts dynamically. Older sheet rows keep their existing M/Z formulas until edited manually.
 
 Legacy hardcoded defaults (for reference):
 
@@ -121,9 +137,18 @@ For `CREDIT_CARD` payment sources, the app stores:
 
 Credit on the sheet = bill payment (reduces bill). Debit on the sheet = card usage (increases bill).
 
-**Net balance** on the dashboard = bank + wallet + cash balances − credit card bill totals (debit cards excluded because they mirror linked banks).
+**Net balance** in the app matches sheet **Total Balance (Z)**: bank balances − credit card bill totals. Cash, wallets, and debit cards are excluded from net balance (debit cards mirror linked banks).
 
 When adding an expense, payment sources are filtered to those with enough available cash or credit for the entered amount.
+
+### Credit card bill payment
+
+Category **Credit card payment** (`credit_card_payment`) on a **bank** expense creates **two sheet rows** on sync:
+
+1. **Expense** on the selected bank (debit column)
+2. **Income** on the target credit card (credit column — reduces bill), description `Bill payment: {your description}`
+
+Both transactions are linked in the app via paired notes for delete/reversal.
 
 Split metadata: append to column C suffix `[split: contact names]` or store in notes column if extended later.
 
@@ -135,7 +160,7 @@ For each unsynced `Transaction`, produce one sheet row:
 A = weekday name (Monday, Tuesday, …)
 B = Excel serial date (days since 1899-12-30)
 C = description (+ optional split/cashback note)
-{D..Z} = empty except the matched source's Credit OR Debit cell
+{D..Z} = Credit/Debit amount for matched source; balance/bill + M/Z formulas written on insert
 {AA..BA} = transaction metadata (IDs, names, split, etc.)
 ```
 
@@ -151,11 +176,11 @@ C = description (+ optional split/cashback note)
    - `pendingDeletes` — tombstones for app-deleted rows removed on next sync
 2. **Sync now** (app → sheet only; sheet is not edited manually):
    - **Delete** queued sheet rows first (bottom-up), then renumber registry entries
-   - **Insert** new transactions at the correct **date position** (`insertDimension` ROWS), not at sheet bottom
+   - **Insert** new transactions at the correct **date position** (`insertDimension` ROWS), writing partial ranges + balance/M/Z formulas via `batchUpdate`
    - **Update** existing sheet row when app `updated_at` is newer than `syncedUpdatedAt`
-   - **Move** row when transaction date changes (delete old row + insert at new date position)
+   - **Move** row when transaction date changes (delete old row + insert at new date position with formulas)
    - **Skip** unchanged transactions already synced
-3. Uses Sheets API row insert/delete for ordering, `batchUpdate` for changed rows (never overwrites balance/formula columns).
+3. Uses Sheets API row insert/delete for ordering, `batchUpdate` for inserts (data + formulas) and updates (data only).
 4. Cashback income rows insert immediately below the parent expense in the same sync batch.
 5. Range: `Sheet1!A:BA` with metadata in AA–BA.
 6. **Import from Google Sheet** (sheet → app): separate action; only rows with non-empty column C (description). Missing metadata columns import as `unknown`.

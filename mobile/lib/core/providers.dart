@@ -117,27 +117,9 @@ final sheetImportServiceProvider = FutureProvider<SheetImportService>((ref) asyn
   );
 });
 
-final descriptionFavoritesProvider =
-    FutureProvider<List<DescriptionFavorite>>((ref) async {
-  final db = await ref.watch(databaseProvider.future);
-  return db.getDescriptionFavorites();
-});
-
 final descriptionSuggestionsProvider = FutureProvider<List<String>>((ref) async {
   final db = await ref.watch(databaseProvider.future);
-  final favorites = await db.getDescriptionFavorites();
-  final frequent = await db.getFrequentDescriptions(limit: 10);
-  final seen = <String>{};
-  final result = <String>[];
-  for (final f in favorites) {
-    final key = f.text.toLowerCase();
-    if (seen.add(key)) result.add(f.text);
-  }
-  for (final d in frequent) {
-    final key = d.toLowerCase();
-    if (seen.add(key)) result.add(d);
-  }
-  return result;
+  return db.getFrequentDescriptions(limit: 8);
 });
 
 final dashboardStatsProvider = FutureProvider<DashboardStats>((ref) async {

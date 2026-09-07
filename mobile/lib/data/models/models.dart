@@ -592,6 +592,8 @@ class SyncStateModel {
     this.sheetGid = '1320698518',
     this.sheetName = 'Sheet1',
     this.metadataStartColumnIndex = 26,
+    this.totalInBankColumn = 'M',
+    this.totalBalanceColumn = 'Z',
   });
 
   final DateTime? lastSyncedAt;
@@ -603,6 +605,8 @@ class SyncStateModel {
   final String sheetName;
   /// 0-based column index where metadata block (Transaction ID …) starts.
   final int metadataStartColumnIndex;
+  final String totalInBankColumn;
+  final String totalBalanceColumn;
 
   Map<String, Object?> toMap() => {
         'id': 1,
@@ -614,6 +618,8 @@ class SyncStateModel {
         'sheet_gid': sheetGid,
         'sheet_name': sheetName,
         'metadata_start_column_index': metadataStartColumnIndex,
+        'total_in_bank_column': totalInBankColumn,
+        'total_balance_column': totalBalanceColumn,
       };
 
   factory SyncStateModel.fromMap(Map<String, Object?> map) => SyncStateModel(
@@ -633,6 +639,10 @@ class SyncStateModel {
         sheetName: map['sheet_name'] as String? ?? 'Sheet1',
         metadataStartColumnIndex:
             map['metadata_start_column_index'] as int? ?? 26,
+        totalInBankColumn:
+            map['total_in_bank_column'] as String? ?? 'M',
+        totalBalanceColumn:
+            map['total_balance_column'] as String? ?? 'Z',
       );
 
   SyncStateModel copyWith({
@@ -641,6 +651,8 @@ class SyncStateModel {
     String? driveFolderId,
     String? googleAccountEmail,
     int? metadataStartColumnIndex,
+    String? totalInBankColumn,
+    String? totalBalanceColumn,
   }) =>
       SyncStateModel(
         lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
@@ -653,6 +665,8 @@ class SyncStateModel {
         sheetName: sheetName,
         metadataStartColumnIndex:
             metadataStartColumnIndex ?? this.metadataStartColumnIndex,
+        totalInBankColumn: totalInBankColumn ?? this.totalInBankColumn,
+        totalBalanceColumn: totalBalanceColumn ?? this.totalBalanceColumn,
       );
 }
 

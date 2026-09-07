@@ -31,7 +31,7 @@ class AppDatabase {
     final dbPath = path ?? p.join(await getDatabasesPath(), 'spendwise.db');
     final db = await openDatabase(
       dbPath,
-      version: 5,
+      version: 6,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
@@ -72,6 +72,9 @@ class AppDatabase {
         }
         if (oldVersion < 5) {
           await _migrateToV5(database);
+        }
+        if (oldVersion < 6) {
+          await _migrateToV6(database);
         }
       },
     );
@@ -82,7 +85,7 @@ class AppDatabase {
   static Future<AppDatabase> openMemory() async {
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 5,
+      version: 6,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
@@ -123,6 +126,9 @@ class AppDatabase {
         }
         if (oldVersion < 5) {
           await _migrateToV5(database);
+        }
+        if (oldVersion < 6) {
+          await _migrateToV6(database);
         }
       },
     );
@@ -265,7 +271,9 @@ class AppDatabase {
         sheet_id TEXT NOT NULL,
         sheet_gid TEXT NOT NULL,
         sheet_name TEXT NOT NULL,
-        metadata_start_column_index INTEGER NOT NULL DEFAULT 26
+        metadata_start_column_index INTEGER NOT NULL DEFAULT 26,
+        total_in_bank_column TEXT NOT NULL DEFAULT 'M',
+        total_balance_column TEXT NOT NULL DEFAULT 'Z'
       )
     ''');
   }
@@ -424,6 +432,17 @@ class AppDatabase {
   Future<TransactionModel?> getTransaction(String id) async {
     final rows =
         await _db.query('transactions', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) return null;
+    return TransactionModel.fromMap(rows.first);
+  }
+
+  Future<TransactionModel?> findTransactionByNotes(String notes) async {
+    final rows = await _db.query(
+      'transactions',
+      where: 'notes = ?',
+      whereArgs: [notes],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return TransactionModel.fromMap(rows.first);
   }
@@ -745,6 +764,15 @@ class AppDatabase {
         created_at TEXT NOT NULL
       )
     ''');
+  }
+
+  static Future<void> _migrateToV6(Database database) async {
+    await database.execute(
+      "ALTER TABLE sync_state ADD COLUMN total_in_bank_column TEXT NOT NULL DEFAULT 'M'",
+    );
+    await database.execute(
+      "ALTER TABLE sync_state ADD COLUMN total_balance_column TEXT NOT NULL DEFAULT 'Z'",
+    );
   }
 
   static Future<void> _backfillLegacySheetColumns(Database database) async {

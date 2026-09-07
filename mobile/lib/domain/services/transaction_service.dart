@@ -18,6 +18,7 @@ class CreateTransactionInput {
     this.notes,
     this.cashbackEntries = const [],
     this.split,
+    this.creditCardPaymentTargetId,
   });
 
   final TransactionType type;
@@ -31,6 +32,7 @@ class CreateTransactionInput {
   final String? notes;
   final List<CashbackEntryInput> cashbackEntries;
   final BillSplitModel? split;
+  final String? creditCardPaymentTargetId;
 }
 
 class TransactionService {
@@ -49,6 +51,10 @@ class TransactionService {
   final Uuid _uuid;
 
   Future<TransactionModel> create(CreateTransactionInput input) async {
+    if (input.creditCardPaymentTargetId != null) {
+      return _createCreditCardPayment(input);
+    }
+
     if (input.type == TransactionType.expense &&
         (input.paymentMethodId == null || input.paymentMethodId!.isEmpty)) {
       throw ArgumentError('Payment method is required for expenses');
@@ -119,12 +125,66 @@ class TransactionService {
     return txn;
   }
 
+  Future<TransactionModel> _createCreditCardPayment(
+    CreateTransactionInput input,
+  ) async {
+    if (input.type != TransactionType.expense) {
+      throw ArgumentError('Credit card payment must be an expense');
+    }
+    final targetId = input.creditCardPaymentTargetId;
+    if (targetId == null || targetId.isEmpty) {
+      throw ArgumentError('Select a credit card to pay toward');
+    }
+
+    final expenseId = _uuid.v4();
+    final incomeId = _uuid.v4();
+
+    final expense = TransactionModel(
+      id: expenseId,
+      type: TransactionType.expense,
+      amount: input.amount,
+      category: input.category,
+      description: input.description,
+      timestamp: input.timestamp,
+      paymentSourceId: input.paymentSourceId,
+      paymentMethodId: input.paymentMethodId ?? 'pm-transfer',
+      paymentAppId: input.paymentAppId,
+      notes: input.notes,
+      updatedAt: DateTime.now(),
+    );
+
+    final income = TransactionModel(
+      id: incomeId,
+      type: TransactionType.income,
+      amount: input.amount,
+      category: input.category,
+      description: 'Bill payment: ${input.description}',
+      timestamp: input.timestamp,
+      paymentSourceId: targetId,
+      notes: 'paired:$expenseId',
+      updatedAt: DateTime.now(),
+    );
+
+    await _db.insertTransaction(expense);
+    await _db.insertTransaction(income);
+
+    await _applyBalances(
+      txn: expense,
+      incomeTxns: [income],
+      reverse: false,
+    );
+
+    return expense;
+  }
+
   Future<TransactionModel> update(
     String id,
     CreateTransactionInput input,
   ) async {
     final existing = await _db.getTransaction(id);
     if (existing == null) throw StateError('Transaction not found');
+
+    await _deletePairedCreditCardPayment(existing);
 
     await _reverseTransaction(existing);
 
@@ -134,6 +194,45 @@ class TransactionService {
         await _reverseTransactionById(cb.incomeTransactionId!);
         await _db.deleteTransaction(cb.incomeTransactionId!);
       }
+    }
+
+    if (input.creditCardPaymentTargetId != null) {
+      final incomeId = _uuid.v4();
+      final updated = TransactionModel(
+        id: id,
+        type: TransactionType.expense,
+        amount: input.amount,
+        category: input.category,
+        description: input.description,
+        timestamp: input.timestamp,
+        paymentSourceId: input.paymentSourceId,
+        paymentMethodId: input.paymentMethodId ?? 'pm-transfer',
+        paymentAppId: input.paymentAppId,
+        notes: input.notes,
+        updatedAt: DateTime.now(),
+      );
+      final income = TransactionModel(
+        id: incomeId,
+        type: TransactionType.income,
+        amount: input.amount,
+        category: input.category,
+        description: 'Bill payment: ${input.description}',
+        timestamp: input.timestamp,
+        paymentSourceId: input.creditCardPaymentTargetId!,
+        notes: 'paired:$id',
+        updatedAt: DateTime.now(),
+      );
+      await _db.updateTransaction(updated);
+      await _db.insertTransaction(income);
+      if (input.split != null) {
+        await _db.upsertBillSplit(input.split!.copyWith(transactionId: id));
+      }
+      await _applyBalances(
+        txn: updated,
+        incomeTxns: [income],
+        reverse: false,
+      );
+      return updated;
     }
 
     var cashbackReceived = 0.0;
@@ -206,6 +305,11 @@ class TransactionService {
 
     final idsToRemove = <String>[id];
 
+    final pairedIncome = await _findPairedIncomeForExpense(id);
+    if (pairedIncome != null) {
+      idsToRemove.add(pairedIncome.id);
+    }
+
     for (final cb in await _db.getCashbacksForTransaction(id)) {
       if (cb.incomeTransactionId != null) {
         idsToRemove.add(cb.incomeTransactionId!);
@@ -241,8 +345,22 @@ class TransactionService {
     }
 
     await _reverseTransaction(txn);
+    if (pairedIncome != null) {
+      await _db.deleteTransaction(pairedIncome.id);
+    }
     await _db.deleteTransaction(id);
   }
+
+  Future<void> _deletePairedCreditCardPayment(TransactionModel expense) async {
+    if (expense.type != TransactionType.expense) return;
+    final paired = await _findPairedIncomeForExpense(expense.id);
+    if (paired == null) return;
+    await _reverseTransactionById(paired.id);
+    await _db.deleteTransaction(paired.id);
+  }
+
+  Future<TransactionModel?> _findPairedIncomeForExpense(String expenseId) =>
+      _db.findTransactionByNotes('paired:$expenseId');
 
   Future<void> _reverseTransaction(TransactionModel txn) async {
     final incomeTxns = <TransactionModel>[];
@@ -252,6 +370,8 @@ class TransactionService {
         if (inc != null) incomeTxns.add(inc);
       }
     }
+    final paired = await _findPairedIncomeForExpense(txn.id);
+    if (paired != null) incomeTxns.add(paired);
     await _applyBalances(txn: txn, incomeTxns: incomeTxns, reverse: true);
   }
 

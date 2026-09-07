@@ -110,6 +110,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final sources = {
       for (final s in await db.getPaymentSources(all: true)) s.id: s,
     };
+    final mappedSources =
+        sources.values.where((s) => s.hasSheetMapping).toList();
 
     for (final id in syncState.exportedTransactionIds) {
       if (registry.entryFor(id) != null) continue;
@@ -140,6 +142,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       fallbackSheetName: syncState.sheetName,
       driveFolderId: syncState.driveFolderId,
       metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      mappedSources: mappedSources,
+      totalInBankColumn: syncState.totalInBankColumn,
+      totalBalanceColumn: syncState.totalBalanceColumn,
       registry: registry,
       pendingRows: () async {
         final freshState = await db.getSyncState();
@@ -177,6 +182,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           lastSyncedAt: DateTime.now(),
           driveFolderId: result.driveFolderId,
           googleAccountEmail: result.googleEmail,
+          totalInBankColumn:
+              result.totalInBankColumn ?? syncState.totalInBankColumn,
+          totalBalanceColumn:
+              result.totalBalanceColumn ?? syncState.totalBalanceColumn,
         ),
       );
       ref.invalidate(syncStateProvider);

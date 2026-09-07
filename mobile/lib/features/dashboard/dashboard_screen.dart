@@ -175,7 +175,7 @@ class DashboardScreen extends ConsumerWidget {
                 title: 'Net balance',
                 value: Formatters.currency.format(stats.totalBalance),
                 color: Theme.of(context).colorScheme.primary,
-                subtitle: 'Bank + wallet + cash − credit card bills',
+                subtitle: 'Bank balances − credit card bills',
               ),
               const SizedBox(height: 24),
               Text(
