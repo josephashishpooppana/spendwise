@@ -120,16 +120,30 @@ class SheetBalanceReader {
 
       final hasCreditDebit =
           (credit != null && credit > 0) || (debit != null && debit > 0);
-      if (hasCreditDebit && balance != null) {
+      final desc =
+          row.length > 2 ? row[2]?.toString().trim() ?? '' : '';
+      final hasDescription = desc.isNotEmpty;
+
+      if (hasDescription && hasCreditDebit && balance != null) {
         fallbackTxnRow ??=
             PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
       }
 
-      // Running balance row with no credit/debit for this source (carry-forward
-      // or e.g. Salary row where only the balance column updated).
-      if (balance != null && !hasCreditDebit) {
+      // Carry-forward row: balance only, no description, no amounts.
+      if (balance != null && !hasDescription && !hasCreditDebit) {
         return PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
       }
+
+      // Description with running balance only (e.g. Salary); skip if a newer
+      // transaction row with credit/debit was already found below.
+      if (balance != null &&
+          hasDescription &&
+          !hasCreditDebit &&
+          fallbackTxnRow == null) {
+        return PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
+      }
+
+      // Rows with no description but inherited credit/debit are skipped.
     }
 
     return fallbackTxnRow ?? fallbackAnyBalance;
