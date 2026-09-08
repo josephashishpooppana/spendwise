@@ -157,6 +157,7 @@ class SheetRowBuilder {
     required List<Object?> fullRow,
     required String amountColumn,
     required int metadataStartColumnIndex,
+    PaymentSourceModel? amountSource,
     String? clearAmountColumn,
   }) {
     final r = '$rowNumber';
@@ -184,12 +185,23 @@ class SheetRowBuilder {
       ),
     ];
 
+    final columnsToClear = <String>{};
     if (clearAmountColumn != null &&
         clearAmountColumn.isNotEmpty &&
         clearAmountColumn != amountColumn) {
+      columnsToClear.add(clearAmountColumn);
+    }
+    final sibling = siblingAmountColumn(
+      source: amountSource,
+      amountColumn: amountColumn,
+    );
+    if (sibling != null) {
+      columnsToClear.add(sibling);
+    }
+    for (final col in columnsToClear) {
       ranges.add(
         sheets.ValueRange(
-          range: formatSheetRange(sheetTitle, '$clearAmountColumn$r'),
+          range: formatSheetRange(sheetTitle, '$col$r'),
           values: [
             [''],
           ],
@@ -214,12 +226,28 @@ class SheetRowBuilder {
     return ranges;
   }
 
+  /// Credit or debit sibling column for the same source (clears inherited values).
+  static String? siblingAmountColumn({
+    required PaymentSourceModel? source,
+    required String amountColumn,
+  }) {
+    if (source == null || !source.hasSheetMapping || amountColumn.isEmpty) {
+      return null;
+    }
+    final credit = source.sheetCreditColumn!;
+    final debit = source.sheetDebitColumn!;
+    if (amountColumn == credit) return debit;
+    if (amountColumn == debit) return credit;
+    return null;
+  }
+
   static List<sheets.ValueRange> buildInsertRanges({
     required String sheetTitle,
     required int rowNumber,
     required List<Object?> fullRow,
     required String amountColumn,
     required int metadataStartColumnIndex,
+    required PaymentSourceModel amountSource,
     required List<PaymentSourceModel> mappedSources,
     required String totalInBankColumn,
     required String totalBalanceColumn,
@@ -230,6 +258,7 @@ class SheetRowBuilder {
       fullRow: fullRow,
       amountColumn: amountColumn,
       metadataStartColumnIndex: metadataStartColumnIndex,
+      amountSource: amountSource,
     );
 
     final r = '$rowNumber';

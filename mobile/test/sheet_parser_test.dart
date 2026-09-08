@@ -284,6 +284,8 @@ void main() {
     test('normalizeSourceTypeKey accepts metadata values', () {
       expect(SheetParser.normalizeSourceTypeKey('CREDIT_CARD'), 'CREDIT_CARD');
       expect(SheetParser.normalizeSourceTypeKey('Credit Card'), 'CREDIT_CARD');
+      expect(SheetParser.normalizeSourceTypeKey('bank_account'), 'BANK');
+      expect(SheetParser.normalizeSourceTypeKey('cash'), 'CASH');
       expect(SheetParser.normalizeSourceTypeKey('unknown'), isNull);
     });
 

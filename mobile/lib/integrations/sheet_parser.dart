@@ -365,7 +365,16 @@ class SheetParser {
     if (raw.isEmpty || raw == SheetImportMetadata.unknown) return null;
     final normalized = raw.trim().toUpperCase().replaceAll(' ', '_');
     if (validSourceTypeKeys.contains(normalized)) return normalized;
-    return null;
+    switch (normalized) {
+      case 'BANK_ACCOUNT':
+        return 'BANK';
+      case 'CREDITCARD':
+        return 'CREDIT_CARD';
+      case 'DEBITCARD':
+        return 'DEBIT_CARD';
+      default:
+        return null;
+    }
   }
 
   static String inferSourceType({

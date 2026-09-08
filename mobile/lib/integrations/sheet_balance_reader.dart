@@ -129,7 +129,7 @@ class SheetBalanceReader {
           row.length > 2 ? row[2]?.toString().trim() ?? '' : '';
       final hasDescription = desc.isNotEmpty;
 
-      if (balance != null && (!hasDescription || !hasCreditDebit)) {
+      if (balance != null && !hasDescription && !hasCreditDebit) {
         return PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
       }
     }

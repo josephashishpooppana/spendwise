@@ -90,5 +90,31 @@ void main() {
       expect(perSource['cc']!.amount, 12500.0);
       expect(perSource['cc']!.sheetRowNumber, 4);
     });
+
+    test('cash balance ignores blank rows with inherited credit/debit', () {
+      final rows = <List<Object?>>[
+        ['Monday', 45290.0, 'Tea', null, null, 1000.0],
+        ['Tuesday', 45291.0, '', null, 40.0, 34905.50], // inherited debit, no desc
+        ['Wednesday', 45292.0, 'Bus', null, 25.0, 34880.50],
+      ];
+
+      const cash = PaymentSourceModel(
+        id: 'cash',
+        name: 'Cash In Hand',
+        sourceTypeKey: 'CASH',
+        sheetCreditColumn: 'D',
+        sheetDebitColumn: 'E',
+        sheetBalanceColumn: 'F',
+      );
+
+      final perSource = SheetBalanceReader.perSourceFromSheet(
+        rows: rows,
+        sources: const [cash],
+        firstDataRowNumber: 3,
+      );
+
+      expect(perSource['cash']!.amount, 34880.50);
+      expect(perSource['cash']!.sheetRowNumber, 5);
+    });
   });
 }
