@@ -125,11 +125,9 @@ class SheetBalanceReader {
             PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
       }
 
-      final desc =
-          row.length > 2 ? row[2]?.toString().trim() ?? '' : '';
-      final hasDescription = desc.isNotEmpty;
-
-      if (balance != null && !hasDescription && !hasCreditDebit) {
+      // Running balance row with no credit/debit for this source (carry-forward
+      // or e.g. Salary row where only the balance column updated).
+      if (balance != null && !hasCreditDebit) {
         return PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
       }
     }
