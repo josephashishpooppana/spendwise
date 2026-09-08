@@ -352,10 +352,29 @@ class SheetParser {
     return lower.contains('total in bank') || lower == 'total balance';
   }
 
+  static const validSourceTypeKeys = {
+    'BANK',
+    'CREDIT_CARD',
+    'CASH',
+    'WALLET',
+    'DEBIT_CARD',
+  };
+
+  /// Normalizes metadata or sheet Source Type values to a known key.
+  static String? normalizeSourceTypeKey(String raw) {
+    if (raw.isEmpty || raw == SheetImportMetadata.unknown) return null;
+    final normalized = raw.trim().toUpperCase().replaceAll(' ', '_');
+    if (validSourceTypeKeys.contains(normalized)) return normalized;
+    return null;
+  }
+
   static String inferSourceType({
     required String name,
     required bool billTotalColumn,
+    String? metadataSourceType,
   }) {
+    final fromMetadata = normalizeSourceTypeKey(metadataSourceType ?? '');
+    if (fromMetadata != null) return fromMetadata;
     if (billTotalColumn) return 'CREDIT_CARD';
     final lower = name.toLowerCase();
     if (lower.contains('cash')) return 'CASH';

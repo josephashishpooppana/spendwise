@@ -280,5 +280,52 @@ void main() {
       expect(mappings.length, 1);
       expect(mappings.first.sourceId, 'icici');
     });
+
+    test('normalizeSourceTypeKey accepts metadata values', () {
+      expect(SheetParser.normalizeSourceTypeKey('CREDIT_CARD'), 'CREDIT_CARD');
+      expect(SheetParser.normalizeSourceTypeKey('Credit Card'), 'CREDIT_CARD');
+      expect(SheetParser.normalizeSourceTypeKey('unknown'), isNull);
+    });
+
+    test('inferSourceType prefers metadata over header name', () {
+      expect(
+        SheetParser.inferSourceType(
+          name: 'Axis Bank Kochi',
+          billTotalColumn: false,
+          metadataSourceType: 'CREDIT_CARD',
+        ),
+        'CREDIT_CARD',
+      );
+    });
+
+    test('mappingsFromSheetHeaders discovers Axis Bank before metadata', () {
+      final header = List<Object?>.filled(32, '');
+      header[3] = 'ICICI Bank';
+      header[26] = 'Axis Bank Kochi one';
+      header[29] = 'Transaction ID';
+      final sub = List<Object?>.filled(32, '');
+      sub[3] = 'Credit';
+      sub[4] = 'Debit';
+      sub[5] = 'Balance';
+      sub[26] = 'Credit';
+      sub[27] = 'Debit';
+      sub[28] = 'Balance';
+
+      final mappings = SheetParser.mappingsFromSheetHeaders(
+        header,
+        sub,
+        metadataStartColumnIndex: 29,
+      );
+
+      expect(
+        mappings.any(
+          (m) =>
+              m.sourceNamePattern == 'Axis Bank Kochi one' &&
+              m.sourceTypeKey == 'BANK' &&
+              m.debitColumn == 'AB',
+        ),
+        isTrue,
+      );
+    });
   });
 }

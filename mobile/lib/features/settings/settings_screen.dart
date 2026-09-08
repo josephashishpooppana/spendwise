@@ -186,6 +186,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               result.totalInBankColumn ?? syncState.totalInBankColumn,
           totalBalanceColumn:
               result.totalBalanceColumn ?? syncState.totalBalanceColumn,
+          metadataStartColumnIndex:
+              result.metadataStartColumnIndex ??
+              syncState.metadataStartColumnIndex,
         ),
       );
       ref.invalidate(syncStateProvider);

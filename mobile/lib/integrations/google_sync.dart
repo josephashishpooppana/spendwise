@@ -57,10 +57,12 @@ class PendingSheetRow {
   final String? previousAmountColumn;
   final int metadataStartColumnIndex;
 
-  List<Object?> buildSheetRow() => SheetRowBuilder.buildRow(
+  List<Object?> buildSheetRow({int? metadataStartColumnIndex}) =>
+      SheetRowBuilder.buildRow(
         transaction: txn,
         source: source,
-        metadataStartColumnIndex: metadataStartColumnIndex,
+        metadataStartColumnIndex:
+            metadataStartColumnIndex ?? this.metadataStartColumnIndex,
         descriptionSuffix: descriptionSuffix,
         method: method,
         app: app,
@@ -436,6 +438,7 @@ class SyncResult {
     this.googleEmail,
     this.totalInBankColumn,
     this.totalBalanceColumn,
+    this.metadataStartColumnIndex,
   });
 
   final bool success;
@@ -449,6 +452,7 @@ class SyncResult {
   final String? googleEmail;
   final String? totalInBankColumn;
   final String? totalBalanceColumn;
+  final int? metadataStartColumnIndex;
 }
 
 class _PlannedInsert {
@@ -517,18 +521,24 @@ class SyncService {
 
       var resolvedTotalInBank = totalInBankColumn;
       var resolvedTotalBalance = totalBalanceColumn;
+      var resolvedMetadataStart = metadataStartColumnIndex;
       try {
         final headerRows = await sheets.readValues(
           spreadsheetId: spreadsheetId,
-          range: formatSheetRange(sheetTitle, 'A1:ZZ1'),
+          range: formatSheetRange(sheetTitle, 'A1:BZ1'),
         );
         if (headerRows.isNotEmpty) {
-          final discovered = SheetSummaryColumns.discover(headerRows.first);
+          final headerRow = headerRows.first;
+          final discovered = SheetSummaryColumns.discover(headerRow);
           resolvedTotalInBank = discovered.totalInBank;
           resolvedTotalBalance = discovered.totalBalance;
+          resolvedMetadataStart = SheetSummaryColumns.discoverMetadataStartColumn(
+                headerRow,
+              ) ??
+              metadataStartColumnIndex;
         }
       } catch (e) {
-        debugPrint('Summary column discovery skipped: $e');
+        debugPrint('Sheet layout discovery skipped: $e');
       }
 
       final pending = await pendingRows();
@@ -538,7 +548,7 @@ class SyncService {
           pending.where((p) => p.action == SheetSyncAction.update).toList();
 
       final rangeEnd =
-          SheetColumnProvisioner.appendRangeEndColumn(metadataStartColumnIndex);
+          SheetColumnProvisioner.appendRangeEndColumn(resolvedMetadataStart);
 
       final sheetId = await sheets.resolveSheetId(
         spreadsheetId: spreadsheetId,
@@ -621,9 +631,9 @@ class SyncService {
               ranges: SheetRowBuilder.buildInsertRanges(
                 sheetTitle: sheetTitle,
                 rowNumber: plan.targetRow,
-                fullRow: plan.row.buildSheetRow(),
+                fullRow: plan.row.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
                 amountColumn: plan.row.amountColumn,
-                metadataStartColumnIndex: metadataStartColumnIndex,
+                metadataStartColumnIndex: resolvedMetadataStart,
                 mappedSources: mappedSources,
                 totalInBankColumn: resolvedTotalInBank,
                 totalBalanceColumn: resolvedTotalBalance,
@@ -647,7 +657,7 @@ class SyncService {
           final sortedAppends = toAppend.toList()
             ..sort((a, b) => a.txn.timestamp.compareTo(b.txn.timestamp));
           final appendRows =
-              sortedAppends.map((p) => p.buildSheetRow()).toList();
+              sortedAppends.map((p) => p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart)).toList();
           final startRow = await sheets.appendRows(
             spreadsheetId: spreadsheetId,
             sheetTitle: sheetTitle,
@@ -662,9 +672,9 @@ class SyncService {
                 SheetRowBuilder.buildInsertRanges(
                   sheetTitle: sheetTitle,
                   rowNumber: startRow + i,
-                  fullRow: p.buildSheetRow(),
+                  fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
                   amountColumn: p.amountColumn,
-                  metadataStartColumnIndex: metadataStartColumnIndex,
+                  metadataStartColumnIndex: resolvedMetadataStart,
                   mappedSources: mappedSources,
                   totalInBankColumn: resolvedTotalInBank,
                   totalBalanceColumn: resolvedTotalBalance,
@@ -702,7 +712,7 @@ class SyncService {
             txn: p.txn,
             source: p.source,
             sheetRows: snapshot,
-            metadataStartColumnIndex: metadataStartColumnIndex,
+            metadataStartColumnIndex: resolvedMetadataStart,
           );
           if (rowNumber == null) {
             debugPrint(
@@ -727,9 +737,9 @@ class SyncService {
                 ranges: SheetRowBuilder.buildInsertRanges(
                   sheetTitle: sheetTitle,
                   rowNumber: target,
-                  fullRow: p.buildSheetRow(),
+                  fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
                   amountColumn: p.amountColumn,
-                  metadataStartColumnIndex: metadataStartColumnIndex,
+                  metadataStartColumnIndex: resolvedMetadataStart,
                   mappedSources: mappedSources,
                   totalInBankColumn: resolvedTotalInBank,
                   totalBalanceColumn: resolvedTotalBalance,
@@ -749,7 +759,7 @@ class SyncService {
               final startRow = await sheets.appendRows(
                 spreadsheetId: spreadsheetId,
                 sheetTitle: sheetTitle,
-                rows: [p.buildSheetRow()],
+                rows: [p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart)],
                 rangeEndColumn: rangeEnd,
               );
               if (startRow != null) {
@@ -758,9 +768,9 @@ class SyncService {
                   ranges: SheetRowBuilder.buildInsertRanges(
                     sheetTitle: sheetTitle,
                     rowNumber: startRow,
-                    fullRow: p.buildSheetRow(),
+                    fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
                     amountColumn: p.amountColumn,
-                    metadataStartColumnIndex: metadataStartColumnIndex,
+                    metadataStartColumnIndex: resolvedMetadataStart,
                     mappedSources: mappedSources,
                     totalInBankColumn: resolvedTotalInBank,
                     totalBalanceColumn: resolvedTotalBalance,
@@ -813,9 +823,9 @@ class SyncService {
             ranges: SheetRowBuilder.buildInsertRanges(
               sheetTitle: sheetTitle,
               rowNumber: target,
-              fullRow: p.buildSheetRow(),
+              fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
               amountColumn: p.amountColumn,
-              metadataStartColumnIndex: metadataStartColumnIndex,
+              metadataStartColumnIndex: resolvedMetadataStart,
               mappedSources: mappedSources,
               totalInBankColumn: resolvedTotalInBank,
               totalBalanceColumn: resolvedTotalBalance,
@@ -834,14 +844,14 @@ class SyncService {
           continue;
         }
 
-        final fullRow = p.buildSheetRow();
+        final fullRow = p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart);
         updateRanges.addAll(
           SheetRowBuilder.buildUpdateRanges(
             sheetTitle: sheetTitle,
             rowNumber: rowNumber,
             fullRow: fullRow,
             amountColumn: p.amountColumn,
-            metadataStartColumnIndex: metadataStartColumnIndex,
+            metadataStartColumnIndex: resolvedMetadataStart,
             clearAmountColumn: p.previousAmountColumn,
           ),
         );
@@ -888,6 +898,7 @@ class SyncService {
         googleEmail: account.email,
         totalInBankColumn: resolvedTotalInBank,
         totalBalanceColumn: resolvedTotalBalance,
+        metadataStartColumnIndex: resolvedMetadataStart,
       );
     } catch (e, st) {
       debugPrint('Sync failed: $e\n$st');

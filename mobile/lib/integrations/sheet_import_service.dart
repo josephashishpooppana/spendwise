@@ -45,37 +45,41 @@ class SheetImportService {
       );
       final resolvedTitle =
           sheetTitle.isNotEmpty ? sheetTitle : fallbackSheetName;
-      final syncState = await db.getSyncState();
-      final rangeEnd = SheetColumnProvisioner.appendRangeEndColumn(
-        syncState.metadataStartColumnIndex,
-      );
-      final fullRange = formatSheetRange(resolvedTitle, 'A1:$rangeEnd');
+      var syncState = await db.getSyncState();
 
-      final allRows = await sheets.readValuesInRowChunks(
+      final headerOnly = await sheets.readValues(
         spreadsheetId: spreadsheetId,
-        sheetTitle: resolvedTitle,
-        rangeEndColumn: rangeEnd,
-        startRow: 1,
-        chunkSize: 500,
+        range: formatSheetRange(resolvedTitle, 'A1:BZ2'),
       );
-
       List<Object?> headerRow = const [];
       List<Object?> subHeaderRow = const [];
-      final List<List<Object?>> rows;
-      if (allRows.length >= 3) {
-        headerRow = allRows[0];
-        subHeaderRow = allRows[1];
-        rows = allRows.sublist(2);
-      } else {
-        rows = allRows;
+      if (headerOnly.isNotEmpty) {
+        headerRow = headerOnly.first;
+        if (headerOnly.length > 1) subHeaderRow = headerOnly[1];
       }
 
       final summaryColumns = SheetSummaryColumns.discover(headerRow);
-      await db.saveSyncState(
-        syncState.copyWith(
-          totalInBankColumn: summaryColumns.totalInBank,
-          totalBalanceColumn: summaryColumns.totalBalance,
-        ),
+      final metadataStart =
+          SheetSummaryColumns.discoverMetadataStartColumn(headerRow);
+      syncState = syncState.copyWith(
+        totalInBankColumn: summaryColumns.totalInBank,
+        totalBalanceColumn: summaryColumns.totalBalance,
+        metadataStartColumnIndex:
+            metadataStart ?? syncState.metadataStartColumnIndex,
+      );
+      await db.saveSyncState(syncState);
+
+      final rangeEnd = SheetColumnProvisioner.appendRangeEndColumn(
+        syncState.metadataStartColumnIndex,
+      );
+      final fullRange = formatSheetRange(resolvedTitle, 'A3:$rangeEnd');
+
+      final rows = await sheets.readValuesInRowChunks(
+        spreadsheetId: spreadsheetId,
+        sheetTitle: resolvedTitle,
+        rangeEndColumn: rangeEnd,
+        startRow: 3,
+        chunkSize: 500,
       );
 
       final sheetRowsRead = rows.length;
@@ -97,9 +101,11 @@ class SheetImportService {
         headerMappings: headerMappings,
         sources: sources,
       );
-      if (createdSources.isNotEmpty) {
-        sources = await db.getPaymentSources(all: true);
-      }
+      await _reconcileSourcesFromHeaderMappings(
+        headerMappings: headerMappings,
+        sources: sources,
+      );
+      sources = await db.getPaymentSources(all: true);
 
       final mappings = SheetParser.buildImportMappings(
         sources: sources,
@@ -145,12 +151,15 @@ class SheetImportService {
           continue;
         }
 
-        final source = _resolveSource(entry, sources);
+        var source = _resolveSource(entry, sources);
         if (source == null) {
           unmatched.add(entry.sourceNamePattern);
           skipped++;
           continue;
         }
+
+        await _applyMetadataSourceType(entry, source, sources);
+        source = sources.firstWhere((s) => s.id == source!.id);
 
         final category = SheetParser.inferCategory(entry);
         final methodId = _resolveMethodId(entry, source, methods);
@@ -269,6 +278,54 @@ class SheetImportService {
       }
     }
     return SheetParser.matchSource(entry.sourceNamePattern, sources);
+  }
+
+  Future<void> _applyMetadataSourceType(
+    ParsedSheetTransaction entry,
+    PaymentSourceModel source,
+    List<PaymentSourceModel> sources,
+  ) async {
+    final metaType =
+        SheetParser.normalizeSourceTypeKey(entry.metadata.sourceType);
+    if (metaType == null || source.sourceTypeKey == metaType) return;
+
+    final updated = source.copyWith(sourceTypeKey: metaType);
+    await db.upsertPaymentSource(updated);
+    final idx = sources.indexWhere((s) => s.id == source.id);
+    if (idx >= 0) {
+      sources[idx] = updated;
+    }
+  }
+
+  Future<void> _reconcileSourcesFromHeaderMappings({
+    required List<SheetColumnMapping> headerMappings,
+    required List<PaymentSourceModel> sources,
+  }) async {
+    for (final mapping in headerMappings) {
+      PaymentSourceModel? existing;
+      for (final s in sources) {
+        if (s.sheetDebitColumn == mapping.debitColumn ||
+            s.name == mapping.sourceNamePattern) {
+          existing = s;
+          break;
+        }
+      }
+      if (existing == null) continue;
+
+      final updated = existing.copyWith(
+        sourceTypeKey: mapping.sourceTypeKey,
+        sheetCreditColumn: mapping.creditColumn,
+        sheetDebitColumn: mapping.debitColumn,
+        sheetBalanceColumn: mapping.balanceColumn,
+      );
+      if (updated.sourceTypeKey == existing.sourceTypeKey &&
+          updated.sheetCreditColumn == existing.sheetCreditColumn &&
+          updated.sheetDebitColumn == existing.sheetDebitColumn &&
+          updated.sheetBalanceColumn == existing.sheetBalanceColumn) {
+        continue;
+      }
+      await db.upsertPaymentSource(updated);
+    }
   }
 
   Future<Set<String>> _ensureSourcesFromHeaderMappings({

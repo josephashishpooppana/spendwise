@@ -20,6 +20,7 @@ class SheetFormulaBuilder {
     if (source.sourceTypeKey == 'CREDIT_CARD') {
       return '=$bal$prev+$debit$rowNumber-$credit$rowNumber';
     }
+    // BANK, CASH, WALLET, DEBIT_CARD
     return '=$bal$prev-$debit$rowNumber+$credit$rowNumber';
   }
 

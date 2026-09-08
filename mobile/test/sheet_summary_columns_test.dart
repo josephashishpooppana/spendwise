@@ -17,4 +17,14 @@ void main() {
     expect(result.totalInBank, 'M');
     expect(result.totalBalance, 'Z');
   });
+
+  test('discovers metadata start at Transaction ID column', () {
+    final header = List<Object?>.filled(30, '');
+    header[29] = 'Transaction ID';
+
+    expect(
+      SheetSummaryColumns.discoverMetadataStartColumn(header),
+      29,
+    );
+  });
 }

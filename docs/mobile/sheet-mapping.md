@@ -104,10 +104,12 @@ When you create a new payment source in **Accounts**:
 
 1. The app inserts **3 columns** in Google Sheet immediately before the metadata block (requires Google sign-in).
 2. Row 1: account name · Row 2: Credit · Debit · Balance (or **Bill Total** for credit cards).
-3. Column letters are saved on the source — sync, import, and balances use them like existing accounts.
-4. The metadata block (Transaction ID … Sync Source) shifts right by 3 columns; the app tracks the new start index in `sync_state.metadata_start_column_index`.
+3. Column letters and **source type** are saved on the payment source — sync, import, and balance formulas use them dynamically.
+4. The metadata block (Transaction ID … Sync Source) shifts right by 3 columns; the app discovers the new start index from the **Transaction ID** header on sync/import.
 
-If Google is not signed in when you save the account, columns are created on the next **Sync now**.
+On **insert sync**, every mapped source gets a balance/bill formula in its column (bank/cash/wallet: running balance; credit card: bill total). **Source Type** is written to metadata column AI on each row.
+
+On **import**, accounts are discovered from row 1–2 headers (including accounts like **Axis Bank Kochi one** added manually or via the app). Existing sources are reconciled with sheet column letters and type (Balance vs Bill Total). When metadata **Source Type** is present on a row, it updates the app source type.
 
 **Note:** When new account columns are inserted before metadata, **Total In Bank** and **Total Balance** formulas on **newly inserted rows** include all mapped accounts dynamically. Older sheet rows keep their existing M/Z formulas until edited manually.
 
