@@ -4,13 +4,21 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
-import 'package:googleapis/sheets/v4.dart' as sheets;
+import 'package:googleapis/sheets/v4.dart' as gsheets;
+import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
+import 'package:http/http.dart' as http;
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/core/google_config.dart';
+import 'package:spendwise_mobile/integrations/drive_backup_naming.dart';
+import 'package:spendwise_mobile/integrations/sheet_row_locator.dart';
+import 'package:spendwise_mobile/integrations/sheet_range.dart';
 import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
+import 'package:spendwise_mobile/integrations/sheet_row_inserter.dart';
+import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
+import 'package:spendwise_mobile/integrations/sheet_summary_columns.dart';
 
 const _scopes = [
-  sheets.SheetsApi.spreadsheetsScope,
+  gsheets.SheetsApi.spreadsheetsScope,
   drive.DriveApi.driveFileScope,
 ];
 
@@ -18,12 +26,58 @@ class PendingSheetRow {
   const PendingSheetRow({
     required this.txn,
     required this.source,
-    this.suffix = '',
+    this.descriptionSuffix = '',
+    this.method,
+    this.app,
+    this.split,
+    this.group,
+    this.contactsById = const {},
+    this.parentTransactionId,
+    this.settlementContactId,
+    this.settlementContactName,
+    this.action = SheetSyncAction.append,
+    this.sheetRowNumber,
+    this.previousAmountColumn,
+    this.metadataStartColumnIndex = 26,
   });
 
   final TransactionModel txn;
   final PaymentSourceModel source;
-  final String suffix;
+  final String descriptionSuffix;
+  final PaymentMethodModel? method;
+  final PaymentAppModel? app;
+  final BillSplitModel? split;
+  final GroupModel? group;
+  final Map<String, ContactModel> contactsById;
+  final String? parentTransactionId;
+  final String? settlementContactId;
+  final String? settlementContactName;
+  final SheetSyncAction action;
+  final int? sheetRowNumber;
+  final String? previousAmountColumn;
+  final int metadataStartColumnIndex;
+
+  List<Object?> buildSheetRow({int? metadataStartColumnIndex}) =>
+      SheetRowBuilder.buildRow(
+        transaction: txn,
+        source: source,
+        metadataStartColumnIndex:
+            metadataStartColumnIndex ?? this.metadataStartColumnIndex,
+        descriptionSuffix: descriptionSuffix,
+        method: method,
+        app: app,
+        split: split,
+        group: group,
+        contactsById: contactsById,
+        parentTransactionId: parentTransactionId,
+        settlementContactId: settlementContactId,
+        settlementContactName: settlementContactName,
+      );
+
+  String get amountColumn => SheetRowBuilder.amountColumnFor(
+        transaction: txn,
+        source: source,
+      );
 }
 
 /// Google Sign-In is created lazily so native code is not touched at app launch.
@@ -55,15 +109,31 @@ class GoogleAuthService {
 
   Future<GoogleSignInAccount?> signInSilently() => _client.signInSilently();
 
-  Future<sheets.SheetsApi?> getSheetsApi() async {
+  Future<http.Client> requireAuthClient() async {
+    final granted = await _client.requestScopes(_scopes);
+    if (!granted) {
+      throw StateError(
+        'Google Sheets/Drive permission was denied. '
+        'Sign out, sign in again, and allow all requested permissions.',
+      );
+    }
+
     final client = await _client.authenticatedClient();
-    if (client == null) return null;
-    return sheets.SheetsApi(client);
+    if (client == null) {
+      throw StateError(
+        'Could not connect to Google APIs. Sign out and sign in again.',
+      );
+    }
+    return client;
   }
 
-  Future<drive.DriveApi?> getDriveApi() async {
-    final client = await _client.authenticatedClient();
-    if (client == null) return null;
+  Future<gsheets.SheetsApi> getSheetsApi() async {
+    final client = await requireAuthClient();
+    return gsheets.SheetsApi(client);
+  }
+
+  Future<drive.DriveApi> getDriveApi() async {
+    final client = await requireAuthClient();
     return drive.DriveApi(client);
   }
 }
@@ -73,20 +143,34 @@ class DriveSyncService {
 
   final GoogleAuthService _auth;
 
-  Future<String?> uploadBackup({
-    required String fileName,
+  Future<String?> uploadWeeklyBackup({
     required String jsonContent,
     String? folderId,
+    DateTime? now,
   }) async {
     final api = await _auth.getDriveApi();
-    if (api == null) return null;
-
+    final fileName = DriveBackupNaming.weeklyFileName(now);
     final bytes = utf8.encode(jsonContent);
     final media = drive.Media(
       Stream.value(bytes),
       bytes.length,
       contentType: 'application/json',
     );
+
+    if (folderId != null) {
+      final escaped = fileName.replaceAll("'", r"\'");
+      final query =
+          "name='$escaped' and '$folderId' in parents and trashed=false";
+      final existing = await api.files.list(
+        q: query,
+        spaces: 'drive',
+      );
+      for (final f in existing.files ?? []) {
+        if (f.id != null) {
+          await api.files.delete(f.id!);
+        }
+      }
+    }
 
     final file = drive.File()
       ..name = fileName
@@ -101,8 +185,6 @@ class DriveSyncService {
 
   Future<String?> ensureBackupFolder() async {
     final api = await _auth.getDriveApi();
-    if (api == null) return null;
-
     const folderName = 'SpendWise Backups';
     const query =
         "mimeType='application/vnd.google-apps.folder' and name='SpendWise Backups' and trashed=false";
@@ -124,20 +206,19 @@ class SheetsSyncService {
 
   final GoogleAuthService _auth;
 
-  Future<String?> resolveSheetTitle({
+  Future<String> resolveSheetTitle({
     required String spreadsheetId,
     required String gid,
   }) async {
     final api = await _auth.getSheetsApi();
-    if (api == null) return null;
 
     final spreadsheet = await api.spreadsheets.get(spreadsheetId);
     for (final sheet in spreadsheet.sheets ?? []) {
       if ('${sheet.properties?.sheetId}' == gid) {
-        return sheet.properties?.title;
+        return sheet.properties?.title ?? '';
       }
     }
-    return spreadsheet.sheets?.first.properties?.title;
+    return spreadsheet.sheets?.first.properties?.title ?? '';
   }
 
   Future<List<List<Object?>>> readValues({
@@ -145,9 +226,12 @@ class SheetsSyncService {
     required String range,
   }) async {
     final api = await _auth.getSheetsApi();
-    if (api == null) return [];
 
-    final response = await api.spreadsheets.values.get(spreadsheetId, range);
+    final response = await api.spreadsheets.values.get(
+      spreadsheetId,
+      range,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    );
     final values = response.values;
     if (values == null) return [];
 
@@ -156,26 +240,188 @@ class SheetsSyncService {
         .toList();
   }
 
-  Future<bool> appendRows({
+  /// Reads large sheets in row chunks to avoid mobile network timeouts.
+  Future<List<List<Object?>>> readValuesInRowChunks({
+    required String spreadsheetId,
+    required String sheetTitle,
+    required String rangeEndColumn,
+    int startRow = 1,
+    int chunkSize = 500,
+  }) async {
+    final allRows = <List<Object?>>[];
+    var rowStart = startRow;
+
+    while (true) {
+      final rowEnd = rowStart + chunkSize - 1;
+      final range = formatSheetRange(
+        sheetTitle,
+        'A$rowStart:$rangeEndColumn$rowEnd',
+      );
+      final chunk = await readValues(
+        spreadsheetId: spreadsheetId,
+        range: range,
+      );
+      if (chunk.isEmpty) break;
+
+      allRows.addAll(chunk);
+      if (chunk.length < chunkSize) break;
+      rowStart += chunkSize;
+    }
+
+    return allRows;
+  }
+
+  Future<int> resolveSheetId({
+    required String spreadsheetId,
+    required String gid,
+  }) async {
+    final api = await _auth.getSheetsApi();
+    final spreadsheet = await api.spreadsheets.get(spreadsheetId);
+    for (final sheet in spreadsheet.sheets ?? []) {
+      if ('${sheet.properties?.sheetId}' == gid) {
+        final id = sheet.properties?.sheetId;
+        if (id == null) throw StateError('Sheet id missing for gid $gid');
+        return id;
+      }
+    }
+    throw StateError('Sheet tab not found (gid $gid)');
+  }
+
+  Future<void> insertColumns({
+    required String spreadsheetId,
+    required int sheetId,
+    required int startIndex,
+    required int columnCount,
+  }) async {
+    if (columnCount <= 0) return;
+    final api = await _auth.getSheetsApi();
+    await api.spreadsheets.batchUpdate(
+      gsheets.BatchUpdateSpreadsheetRequest(
+        requests: [
+          gsheets.Request(
+            insertDimension: gsheets.InsertDimensionRequest(
+              range: gsheets.DimensionRange(
+                sheetId: sheetId,
+                dimension: 'COLUMNS',
+                startIndex: startIndex,
+                endIndex: startIndex + columnCount,
+              ),
+              inheritFromBefore: true,
+            ),
+          ),
+        ],
+      ),
+      spreadsheetId,
+    );
+  }
+
+  Future<int?> appendRows({
     required String spreadsheetId,
     required String sheetTitle,
     required List<List<Object?>> rows,
+    required String rangeEndColumn,
   }) async {
-    if (rows.isEmpty) return true;
+    if (rows.isEmpty) return null;
 
     final api = await _auth.getSheetsApi();
-    if (api == null) return false;
-
-    final range = '$sheetTitle!A:AS';
-    final request = sheets.ValueRange(values: rows);
-    await api.spreadsheets.values.append(
+    final range = formatSheetRange(sheetTitle, 'A:$rangeEndColumn');
+    final request = gsheets.ValueRange(values: rows);
+    final response = await api.spreadsheets.values.append(
       request,
       spreadsheetId,
       range,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
     );
-    return true;
+    return SheetRowBuilder.parseStartRowFromUpdatedRange(
+      response.updates?.updatedRange,
+    );
+  }
+
+  Future<void> batchUpdateRanges({
+    required String spreadsheetId,
+    required List<gsheets.ValueRange> ranges,
+  }) async {
+    if (ranges.isEmpty) return;
+    final api = await _auth.getSheetsApi();
+    await api.spreadsheets.values.batchUpdate(
+      gsheets.BatchUpdateValuesRequest(
+        valueInputOption: 'USER_ENTERED',
+        data: ranges,
+      ),
+      spreadsheetId,
+    );
+  }
+
+  Future<void> insertRowsAt({
+    required String spreadsheetId,
+    required int sheetId,
+    required int sheetRowNumber,
+    int rowCount = 1,
+  }) async {
+    if (rowCount <= 0) return;
+    final api = await _auth.getSheetsApi();
+    await api.spreadsheets.batchUpdate(
+      gsheets.BatchUpdateSpreadsheetRequest(
+        requests: [
+          gsheets.Request(
+            insertDimension: gsheets.InsertDimensionRequest(
+              range: gsheets.DimensionRange(
+                sheetId: sheetId,
+                dimension: 'ROWS',
+                startIndex: sheetRowNumber - 1,
+                endIndex: sheetRowNumber - 1 + rowCount,
+              ),
+              inheritFromBefore: true,
+            ),
+          ),
+        ],
+      ),
+      spreadsheetId,
+    );
+  }
+
+  Future<void> deleteRows({
+    required String spreadsheetId,
+    required int sheetId,
+    required List<int> sheetRowNumbers,
+  }) async {
+    if (sheetRowNumbers.isEmpty) return;
+    final api = await _auth.getSheetsApi();
+    final sorted = sheetRowNumbers.toList()..sort((a, b) => b.compareTo(a));
+    final requests = sorted
+        .map(
+          (rowNum) => gsheets.Request(
+            deleteDimension: gsheets.DeleteDimensionRequest(
+              range: gsheets.DimensionRange(
+                sheetId: sheetId,
+                dimension: 'ROWS',
+                startIndex: rowNum - 1,
+                endIndex: rowNum,
+              ),
+            ),
+          ),
+        )
+        .toList();
+    await api.spreadsheets.batchUpdate(
+      gsheets.BatchUpdateSpreadsheetRequest(requests: requests),
+      spreadsheetId,
+    );
+  }
+
+  Future<void> writeRowAt({
+    required String spreadsheetId,
+    required String sheetTitle,
+    required int rowNumber,
+    required List<Object?> row,
+    required String rangeEndColumn,
+  }) async {
+    final range =
+        formatSheetRange(sheetTitle, 'A$rowNumber:$rangeEndColumn$rowNumber');
+    await batchUpdateRanges(
+      spreadsheetId: spreadsheetId,
+      ranges: [gsheets.ValueRange(range: range, values: [row])],
+    );
   }
 }
 
@@ -183,16 +429,40 @@ class SyncResult {
   const SyncResult({
     required this.success,
     required this.message,
-    this.exportedCount = 0,
+    this.appendedCount = 0,
+    this.updatedCount = 0,
+    this.deletedCount = 0,
+    this.movedCount = 0,
+    this.skippedCount = 0,
     this.driveFolderId,
     this.googleEmail,
+    this.totalInBankColumn,
+    this.totalBalanceColumn,
+    this.metadataStartColumnIndex,
   });
 
   final bool success;
   final String message;
-  final int exportedCount;
+  final int appendedCount;
+  final int updatedCount;
+  final int deletedCount;
+  final int movedCount;
+  final int skippedCount;
   final String? driveFolderId;
   final String? googleEmail;
+  final String? totalInBankColumn;
+  final String? totalBalanceColumn;
+  final int? metadataStartColumnIndex;
+}
+
+class _PlannedInsert {
+  const _PlannedInsert({
+    required this.row,
+    required this.targetRow,
+  });
+
+  final PendingSheetRow row;
+  final int targetRow;
 }
 
 class SyncService {
@@ -209,9 +479,14 @@ class SyncService {
   Future<SyncResult> syncAll({
     required Future<String> Function() exportJson,
     required Future<List<PendingSheetRow>> Function() pendingRows,
+    required SheetSyncRegistry registry,
     required String spreadsheetId,
     required String sheetGid,
     required String fallbackSheetName,
+    required int metadataStartColumnIndex,
+    required List<PaymentSourceModel> mappedSources,
+    String totalInBankColumn = SheetSummaryColumns.defaultTotalInBank,
+    String totalBalanceColumn = SheetSummaryColumns.defaultTotalBalance,
     String? driveFolderId,
   }) async {
     try {
@@ -220,51 +495,449 @@ class SyncService {
         return const SyncResult(success: false, message: 'Google sign-in cancelled');
       }
 
-      final folderId = driveFolderId ?? await drive.ensureBackupFolder();
-      final json = await exportJson();
-      final fileName =
-          'spendwise-backup-${DateTime.now().toIso8601String().substring(0, 10)}.json';
-      await drive.uploadBackup(
-        fileName: fileName,
-        jsonContent: json,
-        folderId: folderId,
-      );
+      String? folderId = driveFolderId;
+      String? backupNote;
+      try {
+        folderId ??= await drive.ensureBackupFolder();
+        final json = await exportJson();
+        final backupFileName = DriveBackupNaming.weeklyFileName();
+        await drive.uploadWeeklyBackup(
+          jsonContent: json,
+          folderId: folderId,
+        );
+        backupNote = 'Drive backup saved ($backupFileName).';
+      } catch (e) {
+        debugPrint('Drive backup skipped: $e');
+        backupNote = 'Drive backup skipped: $e';
+      }
 
-      final pending = await pendingRows();
       var sheetTitle = await sheets.resolveSheetTitle(
         spreadsheetId: spreadsheetId,
         gid: sheetGid,
       );
-      sheetTitle ??= fallbackSheetName;
+      if (sheetTitle.isEmpty) {
+        sheetTitle = fallbackSheetName;
+      }
 
-      final rows = pending
-          .map(
-            (p) => SheetRowBuilder.buildRow(
-              transaction: p.txn,
-              source: p.source,
-              descriptionSuffix: p.suffix,
-            ),
-          )
-          .toList();
-
-      if (rows.isNotEmpty) {
-        await sheets.appendRows(
+      var resolvedTotalInBank = totalInBankColumn;
+      var resolvedTotalBalance = totalBalanceColumn;
+      var resolvedMetadataStart = metadataStartColumnIndex;
+      try {
+        final headerRows = await sheets.readValues(
           spreadsheetId: spreadsheetId,
-          sheetTitle: sheetTitle,
-          rows: rows,
+          range: formatSheetRange(sheetTitle, 'A1:BZ1'),
         );
+        if (headerRows.isNotEmpty) {
+          final headerRow = headerRows.first;
+          final discovered = SheetSummaryColumns.discover(headerRow);
+          resolvedTotalInBank = discovered.totalInBank;
+          resolvedTotalBalance = discovered.totalBalance;
+          resolvedMetadataStart = SheetSummaryColumns.discoverMetadataStartColumn(
+                headerRow,
+              ) ??
+              metadataStartColumnIndex;
+        }
+      } catch (e) {
+        debugPrint('Sheet layout discovery skipped: $e');
+      }
+
+      final pending = await pendingRows();
+      final toAppend =
+          pending.where((p) => p.action == SheetSyncAction.append).toList();
+      final toUpdate =
+          pending.where((p) => p.action == SheetSyncAction.update).toList();
+
+      final rangeEnd =
+          SheetColumnProvisioner.appendRangeEndColumn(resolvedMetadataStart);
+
+      final sheetId = await sheets.resolveSheetId(
+        spreadsheetId: spreadsheetId,
+        gid: sheetGid,
+      );
+
+      var deleted = 0;
+      var appended = 0;
+      var updated = 0;
+      var moved = 0;
+      var usedAppendFallback = false;
+
+      final pendingDeletes = registry.pendingDeletes.toList()
+        ..sort((a, b) => b.sheetRowNumber.compareTo(a.sheetRowNumber));
+      if (pendingDeletes.isNotEmpty) {
+        await sheets.deleteRows(
+          spreadsheetId: spreadsheetId,
+          sheetId: sheetId,
+          sheetRowNumbers: pendingDeletes.map((d) => d.sheetRowNumber).toList(),
+        );
+        for (final del in pendingDeletes) {
+          registry.shiftRowNumbers(del.sheetRowNumber + 1, -1);
+        }
+        deleted = pendingDeletes.length;
+        registry.clearPendingDeletes();
+      }
+
+      List<List<Object?>>? sheetSnapshot;
+      Future<List<List<Object?>>> loadSheetSnapshot() async {
+        sheetSnapshot ??= await sheets.readValues(
+          spreadsheetId: spreadsheetId,
+          range: formatSheetRange(sheetTitle, 'A3:$rangeEnd'),
+        );
+        return sheetSnapshot!;
+      }
+
+      if (toAppend.isNotEmpty) {
+        try {
+          final snapshot = (await loadSheetSnapshot())
+              .map((r) => List<Object?>.from(r))
+              .toList();
+          final parentTargets = <String, int>{};
+          final takenTargets = <int>{};
+          final planned = <_PlannedInsert>[];
+
+          final sortedAppends = toAppend.toList()
+            ..sort((a, b) {
+              final byTime = a.txn.timestamp.compareTo(b.txn.timestamp);
+              if (byTime != 0) return byTime;
+              return a.txn.id.compareTo(b.txn.id);
+            });
+
+          for (final p in sortedAppends) {
+            int target;
+            if (p.parentTransactionId != null &&
+                parentTargets.containsKey(p.parentTransactionId)) {
+              target = parentTargets[p.parentTransactionId]! + 1;
+            } else {
+              target = SheetRowInserter.targetInsertRow(
+                txnDate: p.txn.timestamp,
+                sheetRows: snapshot,
+              );
+            }
+            while (takenTargets.contains(target)) {
+              target++;
+            }
+            takenTargets.add(target);
+
+            planned.add(_PlannedInsert(row: p, targetRow: target));
+            parentTargets[p.txn.id] = target;
+            SheetRowInserter.insertPlaceholderRowAt(
+              snapshot,
+              target,
+              txnDate: p.txn.timestamp,
+            );
+          }
+
+          // Insert top-down (low row first). Bottom-up insert shifts already-written
+          // rows down and leaves blank rows between transactions.
+          planned.sort((a, b) {
+            final byRow = a.targetRow.compareTo(b.targetRow);
+            if (byRow != 0) return byRow;
+            return a.row.txn.timestamp.compareTo(b.row.txn.timestamp);
+          });
+
+          for (final plan in planned) {
+            await sheets.insertRowsAt(
+              spreadsheetId: spreadsheetId,
+              sheetId: sheetId,
+              sheetRowNumber: plan.targetRow,
+            );
+            registry.shiftRowNumbers(plan.targetRow, 1);
+            await sheets.batchUpdateRanges(
+              spreadsheetId: spreadsheetId,
+              ranges: SheetRowBuilder.buildInsertRanges(
+                sheetTitle: sheetTitle,
+                rowNumber: plan.targetRow,
+                fullRow: plan.row.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
+                amountColumn: plan.row.amountColumn,
+                metadataStartColumnIndex: resolvedMetadataStart,
+                amountSource: plan.row.source,
+                mappedSources: mappedSources,
+                totalInBankColumn: resolvedTotalInBank,
+                totalBalanceColumn: resolvedTotalBalance,
+              ),
+            );
+            registry.markSynced(
+              transactionId: plan.row.txn.id,
+              sheetRowNumber: plan.targetRow,
+              syncedUpdatedAt:
+                  plan.row.txn.updatedAt ?? plan.row.txn.timestamp,
+              paymentSourceId: plan.row.source.id,
+              type: plan.row.txn.type,
+              amountColumn: plan.row.amountColumn,
+            );
+            appended++;
+          }
+          sheetSnapshot = null;
+        } catch (e) {
+          debugPrint('Chronological insert failed, falling back to append: $e');
+          usedAppendFallback = true;
+          final sortedAppends = toAppend.toList()
+            ..sort((a, b) => a.txn.timestamp.compareTo(b.txn.timestamp));
+          final appendRows =
+              sortedAppends.map((p) => p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart)).toList();
+          final startRow = await sheets.appendRows(
+            spreadsheetId: spreadsheetId,
+            sheetTitle: sheetTitle,
+            rows: appendRows,
+            rangeEndColumn: rangeEnd,
+          );
+          if (startRow != null) {
+            final insertRanges = <gsheets.ValueRange>[];
+            for (var i = 0; i < sortedAppends.length; i++) {
+              final p = sortedAppends[i];
+              insertRanges.addAll(
+                SheetRowBuilder.buildInsertRanges(
+                  sheetTitle: sheetTitle,
+                  rowNumber: startRow + i,
+                  fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
+                  amountColumn: p.amountColumn,
+                  metadataStartColumnIndex: resolvedMetadataStart,
+                  amountSource: p.source,
+                  mappedSources: mappedSources,
+                  totalInBankColumn: resolvedTotalInBank,
+                  totalBalanceColumn: resolvedTotalBalance,
+                ),
+              );
+            }
+            if (insertRanges.isNotEmpty) {
+              await sheets.batchUpdateRanges(
+                spreadsheetId: spreadsheetId,
+                ranges: insertRanges,
+              );
+            }
+            for (var i = 0; i < sortedAppends.length; i++) {
+              final p = sortedAppends[i];
+              registry.markSynced(
+                transactionId: p.txn.id,
+                sheetRowNumber: startRow + i,
+                syncedUpdatedAt: p.txn.updatedAt ?? p.txn.timestamp,
+                paymentSourceId: p.source.id,
+                type: p.txn.type,
+                amountColumn: p.amountColumn,
+              );
+            }
+            appended = sortedAppends.length;
+          }
+        }
+      }
+
+      final updateRanges = <gsheets.ValueRange>[];
+      for (final p in toUpdate) {
+        var rowNumber = p.sheetRowNumber;
+        if (rowNumber == null || rowNumber <= 0) {
+          final snapshot = await loadSheetSnapshot();
+          rowNumber = SheetRowLocator.findRow(
+            txn: p.txn,
+            source: p.source,
+            sheetRows: snapshot,
+            metadataStartColumnIndex: resolvedMetadataStart,
+          );
+          if (rowNumber == null) {
+            debugPrint(
+              'Could not locate sheet row for ${p.txn.id}; inserting instead.',
+            );
+            try {
+              final snapshot = (await loadSheetSnapshot())
+                  .map((r) => List<Object?>.from(r))
+                  .toList();
+              final target = SheetRowInserter.targetInsertRow(
+                txnDate: p.txn.timestamp,
+                sheetRows: snapshot,
+              );
+              await sheets.insertRowsAt(
+                spreadsheetId: spreadsheetId,
+                sheetId: sheetId,
+                sheetRowNumber: target,
+              );
+              registry.shiftRowNumbers(target, 1);
+              await sheets.batchUpdateRanges(
+                spreadsheetId: spreadsheetId,
+                ranges: SheetRowBuilder.buildInsertRanges(
+                  sheetTitle: sheetTitle,
+                  rowNumber: target,
+                  fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
+                  amountColumn: p.amountColumn,
+                  metadataStartColumnIndex: resolvedMetadataStart,
+                  amountSource: p.source,
+                  mappedSources: mappedSources,
+                  totalInBankColumn: resolvedTotalInBank,
+                  totalBalanceColumn: resolvedTotalBalance,
+                ),
+              );
+              registry.markSynced(
+                transactionId: p.txn.id,
+                sheetRowNumber: target,
+                syncedUpdatedAt: p.txn.updatedAt ?? p.txn.timestamp,
+                paymentSourceId: p.source.id,
+                type: p.txn.type,
+                amountColumn: p.amountColumn,
+              );
+              appended++;
+            } catch (e) {
+              debugPrint('Insert fallback failed, appending: $e');
+              final startRow = await sheets.appendRows(
+                spreadsheetId: spreadsheetId,
+                sheetTitle: sheetTitle,
+                rows: [p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart)],
+                rangeEndColumn: rangeEnd,
+              );
+              if (startRow != null) {
+                await sheets.batchUpdateRanges(
+                  spreadsheetId: spreadsheetId,
+                  ranges: SheetRowBuilder.buildInsertRanges(
+                    sheetTitle: sheetTitle,
+                    rowNumber: startRow,
+                    fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
+                    amountColumn: p.amountColumn,
+                    metadataStartColumnIndex: resolvedMetadataStart,
+                    amountSource: p.source,
+                    mappedSources: mappedSources,
+                    totalInBankColumn: resolvedTotalInBank,
+                    totalBalanceColumn: resolvedTotalBalance,
+                  ),
+                );
+                registry.markSynced(
+                  transactionId: p.txn.id,
+                  sheetRowNumber: startRow,
+                  syncedUpdatedAt: p.txn.updatedAt ?? p.txn.timestamp,
+                  paymentSourceId: p.source.id,
+                  type: p.txn.type,
+                  amountColumn: p.amountColumn,
+                );
+                appended++;
+              }
+            }
+            continue;
+          }
+          registry.adoptRowNumber(p.txn.id, rowNumber);
+        }
+
+        final snapshot = await loadSheetSnapshot();
+        final sheetDate = SheetRowInserter.dateOnSheetRow(snapshot, rowNumber);
+        final needsMove = sheetDate != null &&
+            !SheetRowInserter.isSameDay(sheetDate, p.txn.timestamp);
+
+        if (needsMove) {
+          await sheets.deleteRows(
+            spreadsheetId: spreadsheetId,
+            sheetId: sheetId,
+            sheetRowNumbers: [rowNumber],
+          );
+          registry.shiftRowNumbers(rowNumber + 1, -1);
+
+          final localSnapshot = snapshot.map((r) => List<Object?>.from(r)).toList();
+          SheetRowInserter.removeRowAt(localSnapshot, rowNumber);
+          final target = SheetRowInserter.targetInsertRow(
+            txnDate: p.txn.timestamp,
+            sheetRows: localSnapshot,
+          );
+
+          await sheets.insertRowsAt(
+            spreadsheetId: spreadsheetId,
+            sheetId: sheetId,
+            sheetRowNumber: target,
+          );
+          registry.shiftRowNumbers(target, 1);
+          await sheets.batchUpdateRanges(
+            spreadsheetId: spreadsheetId,
+            ranges: SheetRowBuilder.buildInsertRanges(
+              sheetTitle: sheetTitle,
+              rowNumber: target,
+              fullRow: p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart),
+              amountColumn: p.amountColumn,
+              metadataStartColumnIndex: resolvedMetadataStart,
+              amountSource: p.source,
+              mappedSources: mappedSources,
+              totalInBankColumn: resolvedTotalInBank,
+              totalBalanceColumn: resolvedTotalBalance,
+            ),
+          );
+          registry.markSynced(
+            transactionId: p.txn.id,
+            sheetRowNumber: target,
+            syncedUpdatedAt: p.txn.updatedAt ?? p.txn.timestamp,
+            paymentSourceId: p.source.id,
+            type: p.txn.type,
+            amountColumn: p.amountColumn,
+          );
+          moved++;
+          sheetSnapshot = null;
+          continue;
+        }
+
+        final fullRow = p.buildSheetRow(metadataStartColumnIndex: resolvedMetadataStart);
+        updateRanges.addAll(
+          SheetRowBuilder.buildUpdateRanges(
+            sheetTitle: sheetTitle,
+            rowNumber: rowNumber,
+            fullRow: fullRow,
+            amountColumn: p.amountColumn,
+            metadataStartColumnIndex: resolvedMetadataStart,
+            amountSource: p.source,
+            clearAmountColumn: p.previousAmountColumn,
+          ),
+        );
+        updateRanges.addAll(
+          SheetRowBuilder.buildFormulaRangesForRow(
+            sheetTitle: sheetTitle,
+            rowNumber: rowNumber,
+            mappedSources: mappedSources,
+            totalInBankColumn: resolvedTotalInBank,
+            totalBalanceColumn: resolvedTotalBalance,
+          ),
+        );
+        registry.markSynced(
+          transactionId: p.txn.id,
+          sheetRowNumber: rowNumber,
+          syncedUpdatedAt: p.txn.updatedAt ?? p.txn.timestamp,
+          paymentSourceId: p.source.id,
+          type: p.txn.type,
+          amountColumn: p.amountColumn,
+        );
+        updated++;
+      }
+
+      if (updateRanges.isNotEmpty) {
+        await sheets.batchUpdateRanges(
+          spreadsheetId: spreadsheetId,
+          ranges: updateRanges,
+        );
+      }
+
+      await registry.save();
+
+      final parts = <String>[];
+      if (deleted > 0) parts.add('$deleted deleted');
+      if (appended > 0) parts.add('$appended added');
+      if (updated > 0) parts.add('$updated updated');
+      if (moved > 0) parts.add('$moved moved');
+      var sheetMsg = parts.isEmpty
+          ? 'Sheet up to date — nothing to sync to $sheetTitle.'
+          : 'Sheet sync to $sheetTitle: ${parts.join(', ')}.';
+      if (usedAppendFallback) {
+        sheetMsg += '\nNote: chronological insert unavailable; used bottom append.';
       }
 
       return SyncResult(
         success: true,
-        message: 'Synced ${rows.length} transaction(s) to sheet',
-        exportedCount: rows.length,
+        message: '$sheetMsg\n$backupNote',
+        appendedCount: appended,
+        updatedCount: updated,
+        deletedCount: deleted,
+        movedCount: moved,
         driveFolderId: folderId,
         googleEmail: account.email,
+        totalInBankColumn: resolvedTotalInBank,
+        totalBalanceColumn: resolvedTotalBalance,
+        metadataStartColumnIndex: resolvedMetadataStart,
       );
     } catch (e, st) {
       debugPrint('Sync failed: $e\n$st');
-      return SyncResult(success: false, message: 'Sync failed: $e');
+      return SyncResult(
+        success: false,
+        message: 'Sync failed: $e\n\n'
+            'Ensure your Google account has Editor access to the spreadsheet '
+            'and you allowed Sheets permission when signing in.',
+      );
     }
   }
 }

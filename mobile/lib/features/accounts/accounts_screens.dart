@@ -66,8 +66,8 @@ class PaymentSourcesScreen extends ConsumerWidget {
             return ListTile(
               leading: Icon(_iconForType(s.sourceTypeKey)),
               title: Text(s.name),
-              subtitle: Text(s.sourceTypeKey),
-              trailing: Text(Formatters.currency.format(s.balance)),
+              subtitle: Text(_subtitleForSource(s)),
+              trailing: Text(_trailingForSource(s)),
               onTap: () => context.push('/sources/${s.id}'),
             );
           },
@@ -92,6 +92,34 @@ class PaymentSourcesScreen extends ConsumerWidget {
         return Icons.account_balance_wallet;
     }
   }
+
+  String _subtitleForSource(PaymentSourceModel s) {
+    if (s.sourceTypeKey == 'CREDIT_CARD') {
+      final parts = <String>['Credit card'];
+      if (s.statementDay != null) {
+        parts.add('Statement day ${s.statementDay}');
+      }
+      return parts.join(' · ');
+    }
+    if (s.sourceTypeKey == 'DEBIT_CARD') {
+      return 'Debit card · mirrors linked bank';
+    }
+    return s.sourceTypeKey;
+  }
+
+  String _trailingForSource(PaymentSourceModel s) {
+    if (s.sourceTypeKey == 'CREDIT_CARD') {
+      final available = s.availableCredit;
+      if (available != null) {
+        return '${Formatters.currency.format(s.balance)} bill\n${Formatters.currency.format(available)} avail';
+      }
+      return '${Formatters.currency.format(s.balance)} bill';
+    }
+    if (s.sourceTypeKey == 'DEBIT_CARD') {
+      return 'Linked bank';
+    }
+    return Formatters.currency.format(s.balance);
+  }
 }
 
 class PaymentSourceFormScreen extends ConsumerStatefulWidget {
@@ -109,8 +137,10 @@ class _PaymentSourceFormScreenState
   final _nameCtrl = TextEditingController();
   final _bankCtrl = TextEditingController();
   final _balanceCtrl = TextEditingController(text: '0');
+  final _creditLimitCtrl = TextEditingController();
   String _typeKey = 'BANK';
   String? _linkedBankId;
+  int? _statementDay;
   bool _loading = false;
 
   static const _types = [
@@ -137,6 +167,9 @@ class _PaymentSourceFormScreenState
       _balanceCtrl.text = s.balance.toString();
       _typeKey = s.sourceTypeKey;
       _linkedBankId = s.linkedBankSourceId;
+      _creditLimitCtrl.text =
+          s.creditLimit != null ? s.creditLimit.toString() : '';
+      _statementDay = s.statementDay;
     });
   }
 
@@ -144,18 +177,66 @@ class _PaymentSourceFormScreenState
     setState(() => _loading = true);
     final db = await ref.read(databaseProvider.future);
     final id = widget.sourceId ?? const Uuid().v4();
+    final isNew = widget.sourceId == null;
+    final existing =
+        widget.sourceId != null ? await db.getPaymentSource(widget.sourceId!) : null;
+
+    final balance = _typeKey == 'DEBIT_CARD'
+        ? 0.0
+        : (double.tryParse(_balanceCtrl.text) ?? 0);
+    final creditLimit = _typeKey == 'CREDIT_CARD'
+        ? double.tryParse(_creditLimitCtrl.text)
+        : null;
+
     await db.upsertPaymentSource(
       PaymentSourceModel(
         id: id,
         name: _nameCtrl.text.trim(),
         bankName: _bankCtrl.text.trim().isEmpty ? null : _bankCtrl.text.trim(),
         sourceTypeKey: _typeKey,
-        balance: double.tryParse(_balanceCtrl.text) ?? 0,
+        balance: balance,
         linkedBankSourceId:
             _typeKey == 'DEBIT_CARD' ? _linkedBankId : null,
+        creditLimit: creditLimit,
+        statementDay: _typeKey == 'CREDIT_CARD' ? _statementDay : null,
+        sheetCreditColumn: existing?.sheetCreditColumn,
+        sheetDebitColumn: existing?.sheetDebitColumn,
+        sheetBalanceColumn: existing?.sheetBalanceColumn,
       ),
     );
     ref.invalidate(paymentSourcesProvider);
+
+    if (isNew) {
+      try {
+        final syncState = await db.getSyncState();
+        final provisioner =
+            await ref.read(sheetColumnProvisionerProvider.future);
+        await provisioner.ensureForSourceId(
+          sourceId: id,
+          syncState: syncState,
+        );
+        ref.invalidate(syncStateProvider);
+        ref.invalidate(paymentSourcesProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Account saved. Google Sheet columns were added.'),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Account saved. Sign in and sync to add sheet columns: $e',
+              ),
+            ),
+          );
+        }
+      }
+    }
+
     if (mounted) context.pop();
   }
 
@@ -194,6 +275,65 @@ class _PaymentSourceFormScreenState
                 .toList(),
             onChanged: (v) => setState(() => _typeKey = v ?? _typeKey),
           ),
+          if (_typeKey == 'CREDIT_CARD') ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _creditLimitCtrl,
+              decoration: const InputDecoration(labelText: 'Credit limit'),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Statement day'),
+              subtitle: Text(
+                _statementDay == null
+                    ? 'Not set'
+                    : 'Closes on day $_statementDay of each month',
+              ),
+              trailing: const Icon(Icons.calendar_today),
+              onTap: () async {
+                final picked = await showDialog<int>(
+                  context: context,
+                  builder: (context) {
+                    return AlertDialog(
+                      title: const Text('Statement day'),
+                      content: SizedBox(
+                        width: double.maxFinite,
+                        height: 300,
+                        child: ListView.builder(
+                          itemCount: 31,
+                          itemBuilder: (context, i) {
+                            final day = i + 1;
+                            return ListTile(
+                              title: Text('Day $day'),
+                              selected: _statementDay == day,
+                              onTap: () => Navigator.pop(context, day),
+                            );
+                          },
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        if (_statementDay != null)
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, -1),
+                            child: const Text('Clear'),
+                          ),
+                      ],
+                    );
+                  },
+                );
+                if (picked == null) return;
+                setState(() {
+                  _statementDay = picked == -1 ? null : picked;
+                });
+              },
+            ),
+          ],
           if (_typeKey == 'DEBIT_CARD')
             banksAsync.when(
               loading: () => const SizedBox.shrink(),
@@ -218,12 +358,28 @@ class _PaymentSourceFormScreenState
                 );
               },
             ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _balanceCtrl,
-            decoration: const InputDecoration(labelText: 'Opening balance'),
-            keyboardType: TextInputType.number,
-          ),
+          if (_typeKey != 'DEBIT_CARD') ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _balanceCtrl,
+              decoration: InputDecoration(
+                labelText: _typeKey == 'CREDIT_CARD'
+                    ? 'Bill total (opening)'
+                    : 'Opening balance',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            if (_typeKey == 'CREDIT_CARD' &&
+                _creditLimitCtrl.text.isNotEmpty &&
+                _balanceCtrl.text.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Available credit: ${Formatters.currency.format((double.tryParse(_creditLimitCtrl.text) ?? 0) - (double.tryParse(_balanceCtrl.text) ?? 0))}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+          ],
         ],
       ),
     );

@@ -2,18 +2,27 @@ import 'package:spendwise_mobile/data/database.dart';
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/domain/services/balance_service.dart';
 import 'package:spendwise_mobile/integrations/google_sync.dart';
+import 'package:spendwise_mobile/integrations/sheet_balance_reader.dart';
+import 'package:spendwise_mobile/integrations/sheet_column_provisioner.dart';
 import 'package:spendwise_mobile/integrations/sheet_parser.dart';
+import 'package:spendwise_mobile/integrations/sheet_range.dart';
+import 'package:spendwise_mobile/integrations/sheet_summary_columns.dart';
+import 'package:spendwise_mobile/integrations/sheet_sync_registry.dart';
+import 'package:uuid/uuid.dart';
 
 class SheetImportService {
   SheetImportService({
     required this.auth,
     required this.sheets,
     required this.db,
+    required this.registry,
   });
 
   final GoogleAuthService auth;
   final SheetsSyncService sheets;
   final AppDatabase db;
+  final SheetSyncRegistry registry;
+  static const _uuid = Uuid();
 
   Future<SheetImportResult> importFromGoogleSheet({
     required String spreadsheetId,
@@ -31,101 +40,211 @@ class SheetImportService {
       }
 
       final sheetTitle = await sheets.resolveSheetTitle(
-            spreadsheetId: spreadsheetId,
-            gid: sheetGid,
-          ) ??
-          fallbackSheetName;
-
-      final rows = await sheets.readValues(
         spreadsheetId: spreadsheetId,
-        range: '$sheetTitle!A3:AS',
+        gid: sheetGid,
+      );
+      final resolvedTitle =
+          sheetTitle.isNotEmpty ? sheetTitle : fallbackSheetName;
+      var syncState = await db.getSyncState();
+
+      final headerOnly = await sheets.readValues(
+        spreadsheetId: spreadsheetId,
+        range: formatSheetRange(resolvedTitle, 'A1:BZ2'),
+      );
+      List<Object?> headerRow = const [];
+      List<Object?> subHeaderRow = const [];
+      if (headerOnly.isNotEmpty) {
+        headerRow = headerOnly.first;
+        if (headerOnly.length > 1) subHeaderRow = headerOnly[1];
+      }
+
+      final summaryColumns = SheetSummaryColumns.discover(headerRow);
+      final metadataStart =
+          SheetSummaryColumns.discoverMetadataStartColumn(headerRow);
+      syncState = syncState.copyWith(
+        totalInBankColumn: summaryColumns.totalInBank,
+        totalBalanceColumn: summaryColumns.totalBalance,
+        metadataStartColumnIndex:
+            metadataStart ?? syncState.metadataStartColumnIndex,
+      );
+      await db.saveSyncState(syncState);
+
+      final rangeEnd = SheetColumnProvisioner.appendRangeEndColumn(
+        syncState.metadataStartColumnIndex,
+      );
+      final fullRange = formatSheetRange(resolvedTitle, 'A3:$rangeEnd');
+
+      final rows = await sheets.readValuesInRowChunks(
+        spreadsheetId: spreadsheetId,
+        sheetTitle: resolvedTitle,
+        rangeEndColumn: rangeEnd,
+        startRow: 3,
+        chunkSize: 500,
       );
 
+      final sheetRowsRead = rows.length;
       if (rows.isEmpty) {
-        return const SheetImportResult(
+        return SheetImportResult(
           success: false,
-          message: 'No data rows found in the sheet.',
+          message: 'No data rows found in $resolvedTitle ($fullRange). '
+              'Check that the sheet has data from row 3 and your account has access.',
         );
       }
 
-      final parsed = SheetParser.parseAllRows(rows);
+      var sources = await db.getPaymentSources(all: true);
+      final headerMappings = SheetParser.mappingsFromSheetHeaders(
+        headerRow,
+        subHeaderRow,
+        metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      );
+      final createdSources = await _ensureSourcesFromHeaderMappings(
+        headerMappings: headerMappings,
+        sources: sources,
+      );
+      await _reconcileSourcesFromHeaderMappings(
+        headerMappings: headerMappings,
+        sources: sources,
+      );
+      sources = await db.getPaymentSources(all: true);
+
+      final mappings = SheetParser.buildImportMappings(
+        sources: sources,
+        headerRow: headerRow,
+        subHeaderRow: subHeaderRow,
+        metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      );
+      final parsed = SheetParser.parseAllRows(
+        rows,
+        mappings: mappings,
+        metadataStartColumnIndex: syncState.metadataStartColumnIndex,
+      );
       if (parsed.isEmpty) {
-        return const SheetImportResult(
+        return SheetImportResult(
           success: false,
-          message: 'No transactions could be parsed from the sheet.',
+          message: 'Read ${rows.length} row(s) from $resolvedTitle but could not '
+              'parse any transactions. Rows need a date, non-empty description (column C), '
+              'and credit or debit greater than zero.',
         );
       }
 
       if (replaceExisting) {
         await db.clearAllTransactions();
         await db.resetAllSourceBalances();
+        for (final id in registry.entries.keys.toList()) {
+          registry.remove(id);
+        }
       }
 
-      final sources = await db.getPaymentSources(all: true);
+      final methods = await db.getPaymentMethods();
+      final apps = await db.getPaymentApps(all: true);
       final unmatched = <String>{};
       var imported = 0;
       var skipped = 0;
-      final importedIds = <String>[];
+      int? minImportedSheetRow;
+      int? maxImportedSheetRow;
+      final toInsert = <TransactionModel>[];
+      final lastImportedSheetRowBySource = <String, int>{};
 
       for (final entry in parsed) {
         if (!replaceExisting && await db.transactionExists(entry.importId)) {
           skipped++;
-          importedIds.add(entry.importId);
+          _registerImported(entry);
           continue;
         }
 
-        final source = SheetParser.matchSource(
-          entry.sourceNamePattern,
-          sources,
-        );
+        var source = _resolveSource(entry, sources);
         if (source == null) {
           unmatched.add(entry.sourceNamePattern);
           skipped++;
           continue;
         }
 
-        final category = SheetParser.inferCategory(entry);
-        final methodId = entry.type == TransactionType.expense
-            ? SheetParser.defaultMethodIdForSource(source)
-            : null;
+        await _applyMetadataSourceType(entry, source, sources);
+        source = sources.firstWhere((s) => s.id == source!.id);
 
-        await db.insertTransaction(
+        final prevRow = lastImportedSheetRowBySource[source.id];
+        if (prevRow == null || entry.sheetRowNumber > prevRow) {
+          lastImportedSheetRowBySource[source.id] = entry.sheetRowNumber;
+        }
+
+        final category = SheetParser.inferCategory(entry);
+        final methodId = _resolveMethodId(entry, source, methods);
+        final appId = _resolveAppId(entry, apps);
+        final notes = entry.metadata.notes.isNotEmpty
+            ? entry.metadata.notes
+            : 'Imported from sheet row ${entry.sheetRowNumber}';
+
+        toInsert.add(
           TransactionModel(
             id: entry.importId,
             type: entry.type,
-            amount: entry.amount,
+            amount: entry.metadata.grossAmount ?? entry.amount,
             category: category,
             description: entry.description,
             timestamp: entry.date,
             paymentSourceId: source.id,
             paymentMethodId: methodId,
-            notes: 'Imported from sheet row ${entry.sheetRowNumber}',
+            paymentAppId: appId,
+            notes: notes,
+            cashbackReceived: entry.metadata.cashback ?? 0,
             isAutomated: true,
             updatedAt: entry.date,
           ),
         );
 
+        _registerImported(entry, source: source);
         imported++;
-        importedIds.add(entry.importId);
+        minImportedSheetRow = minImportedSheetRow == null
+            ? entry.sheetRowNumber
+            : minImportedSheetRow < entry.sheetRowNumber
+                ? minImportedSheetRow
+                : entry.sheetRowNumber;
+        maxImportedSheetRow = maxImportedSheetRow == null
+            ? entry.sheetRowNumber
+            : maxImportedSheetRow > entry.sheetRowNumber
+                ? maxImportedSheetRow
+                : entry.sheetRowNumber;
       }
 
-      await _recalculateBalancesFromTransactions();
+      await db.insertTransactionsBatch(toInsert);
 
-      final state = await db.getSyncState();
-      await db.saveSyncState(
-        state.copyWith(
-          exportedTransactionIds: {
-            ...state.exportedTransactionIds,
-            ...importedIds,
-          }.toList(),
-        ),
-      );
+      var balanceNote = '';
+      if (replaceExisting) {
+        final sourcesForBalance = await db.getPaymentSources(all: true);
+        balanceNote = await _applyOpeningBalancesFromSheet(
+          rows: rows,
+          sources: sourcesForBalance,
+          lastImportedSheetRowBySource: lastImportedSheetRowBySource,
+        );
+      } else {
+        await _recalculateBalancesFromTransactions();
+      }
+
+      await registry.save();
 
       var message =
-          'Imported $imported transaction(s) from Google Sheet (${parsed.length} parsed, $skipped skipped).';
+          'Imported $imported transaction(s) from Google Sheet (${parsed.length} parsed, $skipped skipped).\n'
+          'Read $sheetRowsRead sheet data row(s) (API rows ${rows.length + 2} incl. headers).';
+      if (minImportedSheetRow != null && maxImportedSheetRow != null) {
+        message +=
+            '\nImported sheet rows: $minImportedSheetRow–$maxImportedSheetRow.';
+      }
+      if (sheetRowsRead > 0 && minImportedSheetRow != null && minImportedSheetRow > 3) {
+        message +=
+            '\nNote: No transactions parsed before sheet row ${minImportedSheetRow - 1}. '
+            'Check dates/descriptions/amounts on earlier rows in Sheet1.';
+      }
+      message += '\nRows with empty description were ignored.';
+      if (createdSources.isNotEmpty) {
+        message +=
+            '\nAdded ${createdSources.length} account(s) from sheet headers: ${createdSources.join(', ')}.';
+      }
+      if (balanceNote.isNotEmpty) {
+        message += '\n$balanceNote';
+      }
       if (unmatched.isNotEmpty) {
         message +=
-            '\nNo matching account for: ${unmatched.join(', ')}. Add them under Accounts.';
+            '\nNo matching account for: ${unmatched.join(', ')}.';
       }
 
       return SheetImportResult(
@@ -134,18 +253,220 @@ class SheetImportService {
         imported: imported,
         skipped: skipped,
         unmatchedSources: unmatched,
+        sourcesCreated: createdSources.length,
+        sheetRowsRead: sheetRowsRead,
+        parsedCount: parsed.length,
+        minImportedSheetRow: minImportedSheetRow,
+        maxImportedSheetRow: maxImportedSheetRow,
       );
     } catch (e) {
       return SheetImportResult(
         success: false,
-        message: 'Import failed: $e',
+        message: 'Import failed: $e\n\n'
+            'Sign out and sign in again, allow Sheets access, and confirm '
+            'your Google account can edit the spreadsheet.',
       );
     }
   }
 
+  PaymentSourceModel? _resolveSource(
+    ParsedSheetTransaction entry,
+    List<PaymentSourceModel> sources,
+  ) {
+    if (entry.metadata.sourceId.isNotEmpty) {
+      for (final s in sources) {
+        if (s.id == entry.metadata.sourceId) return s;
+      }
+    }
+    if (entry.metadata.sourceName.isNotEmpty &&
+        entry.metadata.sourceName != SheetImportMetadata.unknown) {
+      for (final s in sources) {
+        if (s.name == entry.metadata.sourceName) return s;
+      }
+    }
+    return SheetParser.matchSource(entry.sourceNamePattern, sources);
+  }
+
+  Future<void> _applyMetadataSourceType(
+    ParsedSheetTransaction entry,
+    PaymentSourceModel source,
+    List<PaymentSourceModel> sources,
+  ) async {
+    final metaType =
+        SheetParser.normalizeSourceTypeKey(entry.metadata.sourceType);
+    if (metaType == null || source.sourceTypeKey == metaType) return;
+
+    final updated = source.copyWith(sourceTypeKey: metaType);
+    await db.upsertPaymentSource(updated);
+    final idx = sources.indexWhere((s) => s.id == source.id);
+    if (idx >= 0) {
+      sources[idx] = updated;
+    }
+  }
+
+  Future<void> _reconcileSourcesFromHeaderMappings({
+    required List<SheetColumnMapping> headerMappings,
+    required List<PaymentSourceModel> sources,
+  }) async {
+    for (final mapping in headerMappings) {
+      PaymentSourceModel? existing;
+      for (final s in sources) {
+        if (s.sheetDebitColumn == mapping.debitColumn ||
+            s.name == mapping.sourceNamePattern) {
+          existing = s;
+          break;
+        }
+      }
+      if (existing == null) continue;
+
+      final updated = existing.copyWith(
+        sourceTypeKey: mapping.sourceTypeKey,
+        sheetCreditColumn: mapping.creditColumn,
+        sheetDebitColumn: mapping.debitColumn,
+        sheetBalanceColumn: mapping.balanceColumn,
+      );
+      if (updated.sourceTypeKey == existing.sourceTypeKey &&
+          updated.sheetCreditColumn == existing.sheetCreditColumn &&
+          updated.sheetDebitColumn == existing.sheetDebitColumn &&
+          updated.sheetBalanceColumn == existing.sheetBalanceColumn) {
+        continue;
+      }
+      await db.upsertPaymentSource(updated);
+    }
+  }
+
+  Future<Set<String>> _ensureSourcesFromHeaderMappings({
+    required List<SheetColumnMapping> headerMappings,
+    required List<PaymentSourceModel> sources,
+  }) async {
+    final created = <String>{};
+
+    for (final mapping in headerMappings) {
+      if (SheetParser.mappingCoveredBySource(mapping, sources)) continue;
+
+      final source = PaymentSourceModel(
+        id: _uuid.v4(),
+        name: mapping.sourceNamePattern,
+        sourceTypeKey: mapping.sourceTypeKey,
+        sheetCreditColumn: mapping.creditColumn,
+        sheetDebitColumn: mapping.debitColumn,
+        sheetBalanceColumn: mapping.balanceColumn,
+      );
+      await db.upsertPaymentSource(source);
+      sources.add(source);
+      created.add(mapping.sourceNamePattern);
+    }
+
+    return created;
+  }
+
+  String? _resolveMethodId(
+    ParsedSheetTransaction entry,
+    PaymentSourceModel source,
+    List<PaymentMethodModel> methods,
+  ) {
+    if (entry.metadata.methodId.isNotEmpty) {
+      for (final m in methods) {
+        if (m.id == entry.metadata.methodId) return m.id;
+      }
+    }
+    if (entry.metadata.methodName.isNotEmpty &&
+        entry.metadata.methodName != SheetImportMetadata.unknown) {
+      for (final m in methods) {
+        if (m.name == entry.metadata.methodName) return m.id;
+      }
+    }
+    return entry.type == TransactionType.expense
+        ? SheetParser.defaultMethodIdForSource(source)
+        : null;
+  }
+
+  String? _resolveAppId(
+    ParsedSheetTransaction entry,
+    List<PaymentAppModel> apps,
+  ) {
+    if (entry.metadata.appId.isNotEmpty) {
+      for (final a in apps) {
+        if (a.id == entry.metadata.appId) return a.id;
+      }
+    }
+    if (entry.metadata.appName.isNotEmpty &&
+        entry.metadata.appName != SheetImportMetadata.unknown) {
+      for (final a in apps) {
+        if (a.name == entry.metadata.appName) return a.id;
+      }
+    }
+    return null;
+  }
+
+  void _registerImported(
+    ParsedSheetTransaction entry, {
+    PaymentSourceModel? source,
+  }) {
+    registry.markSynced(
+      transactionId: entry.importId,
+      sheetRowNumber: entry.sheetRowNumber,
+      syncedUpdatedAt: entry.date,
+      paymentSourceId: source?.id ?? entry.metadata.sourceId,
+      type: entry.type,
+      amountColumn: entry.columnKey,
+    );
+  }
+
+  Future<String> _applyOpeningBalancesFromSheet({
+    required List<List<Object?>> rows,
+    required List<PaymentSourceModel> sources,
+    Map<String, int> lastImportedSheetRowBySource = const {},
+  }) async {
+    final readings = <String, PerSourceBalance>{};
+    for (final source in sources) {
+      final reading = SheetBalanceReader.balanceForSource(
+        rows: rows,
+        source: source,
+        preferSheetRowNumber: lastImportedSheetRowBySource[source.id],
+      );
+      if (reading != null) {
+        readings[source.id] = reading;
+      }
+    }
+
+    if (readings.isEmpty) {
+      await _recalculateBalancesFromTransactions();
+      return 'Could not read balances from the sheet; balances computed from imported transactions.';
+    }
+
+    var applied = 0;
+    for (final source in sources) {
+      final reading = readings[source.id];
+      if (reading == null) continue;
+      await db.updateSourceBalance(source.id, reading.amount);
+      applied++;
+    }
+
+    if (applied == 0) {
+      await _recalculateBalancesFromTransactions();
+      return 'No account balance columns matched on the sheet.';
+    }
+
+    final parts = <String>[];
+    for (final source in sources) {
+      final reading = readings[source.id];
+      if (reading == null) continue;
+      final label = source.sourceTypeKey == 'CREDIT_CARD'
+          ? '${source.name} bill'
+          : source.name;
+      parts.add(
+        '$label row ${reading.sheetRowNumber} ${reading.amount.toStringAsFixed(2)}',
+      );
+    }
+
+    return 'Opening balances (per account last row): ${parts.join(', ')}.';
+  }
+
   Future<void> _recalculateBalancesFromTransactions() async {
     final sources = {
-      for (final s in await db.getPaymentSources(all: true)) s.id: s.copyWith(balance: 0),
+      for (final s in await db.getPaymentSources(all: true))
+        s.id: s.copyWith(balance: 0),
     };
     final balanceService = BalanceService();
 

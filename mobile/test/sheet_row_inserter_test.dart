@@ -1,0 +1,137 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:spendwise_mobile/integrations/sheet_row_inserter.dart';
+
+void main() {
+  group('SheetRowInserter', () {
+    test('inserts before first later-dated row', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Tea'],
+        ['Wednesday', DateTime(2026, 1, 3), 'Lunch'],
+      ];
+
+      final target = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 2),
+        sheetRows: rows,
+      );
+
+      expect(target, 4);
+    });
+
+    test('inserts after last row when date is newest', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Tea'],
+        ['Tuesday', DateTime(2026, 1, 2), 'Lunch'],
+      ];
+
+      final target = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 5),
+        sheetRows: rows,
+      );
+
+      expect(target, 5);
+    });
+
+    test('inserts at row 3 when sheet is empty', () {
+      expect(
+        SheetRowInserter.targetInsertRow(
+          txnDate: DateTime(2026, 1, 1),
+          sheetRows: const [],
+        ),
+        3,
+      );
+    });
+
+    test('placeholder insert shifts later targets', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Tea'],
+        ['Wednesday', DateTime(2026, 1, 3), 'Lunch'],
+      ];
+      final snapshot = rows.map((r) => List<Object?>.from(r)).toList();
+
+      final first = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 2),
+        sheetRows: snapshot,
+      );
+      SheetRowInserter.insertPlaceholderRowAt(
+        snapshot,
+        first,
+        txnDate: DateTime(2026, 1, 2),
+      );
+
+      final second = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 4),
+        sheetRows: snapshot,
+      );
+
+      expect(first, 4);
+      expect(second, 6);
+    });
+
+    test('multi insert order is ascending so lower rows are not shifted again', () {
+      final planned = [
+        (target: 1859, label: 'snacks'),
+        (target: 1858, label: 'metro'),
+      ]..sort((a, b) => a.target.compareTo(b.target));
+
+      expect(planned.map((p) => p.target).toList(), [1858, 1859]);
+    });
+
+    test('today then yesterday need distinct targets when second is reserved', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Older'],
+      ];
+      final snapshot = rows.map((r) => List<Object?>.from(r)).toList();
+      final takenTargets = <int>{};
+
+      var target = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 5),
+        sheetRows: snapshot,
+      );
+      while (takenTargets.contains(target)) {
+        target++;
+      }
+      takenTargets.add(target);
+      SheetRowInserter.insertPlaceholderRowAt(
+        snapshot,
+        target,
+        txnDate: DateTime(2026, 1, 5),
+      );
+
+      var target2 = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 4),
+        sheetRows: snapshot,
+      );
+      while (takenTargets.contains(target2)) {
+        target2++;
+      }
+
+      expect(target, 4);
+      expect(target2, 5);
+    });
+
+    test('yesterday then today get distinct rows when planned in order', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Older'],
+      ];
+      final snapshot = rows.map((r) => List<Object?>.from(r)).toList();
+
+      final yesterdayTarget = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 4),
+        sheetRows: snapshot,
+      );
+      SheetRowInserter.insertPlaceholderRowAt(
+        snapshot,
+        yesterdayTarget,
+        txnDate: DateTime(2026, 1, 4),
+      );
+
+      final todayTarget = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 5),
+        sheetRows: snapshot,
+      );
+
+      expect(yesterdayTarget, 4);
+      expect(todayTarget, 5);
+    });
+  });
+}

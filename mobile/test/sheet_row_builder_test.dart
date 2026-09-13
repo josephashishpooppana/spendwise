@@ -18,13 +18,21 @@ void main() {
       id: 's1',
       name: 'ICICI Bank',
       sourceTypeKey: 'BANK',
+      sheetCreditColumn: 'D',
+      sheetDebitColumn: 'E',
     );
 
-    final row = SheetRowBuilder.buildRow(transaction: txn, source: source);
+    final row = SheetRowBuilder.buildRow(
+      transaction: txn,
+      source: source,
+      metadataStartColumnIndex: 26,
+    );
 
+    expect(row.length, 53);
     expect(row[0], 'Monday');
     expect(row[2], 'Tea');
     expect(row[4], 90.0); // column E = debit for ICICI
+    expect(row[26], '1'); // AA = transaction id
   });
 
   test('buildRow places income credit in cash column', () {
@@ -41,10 +49,57 @@ void main() {
       id: 's1',
       name: 'Cash In Hand',
       sourceTypeKey: 'CASH',
+      sheetCreditColumn: 'W',
+      sheetDebitColumn: 'X',
     );
 
-    final row = SheetRowBuilder.buildRow(transaction: txn, source: source);
+    final row = SheetRowBuilder.buildRow(
+      transaction: txn,
+      source: source,
+      metadataStartColumnIndex: 26,
+    );
 
     expect(row[22], 500.0); // column W = credit for cash
+  });
+
+  test('buildUpdateRanges clears sibling credit/debit column', () {
+    const source = PaymentSourceModel(
+      id: 's1',
+      name: 'HDFC',
+      sourceTypeKey: 'BANK',
+      sheetCreditColumn: 'D',
+      sheetDebitColumn: 'E',
+    );
+    final fullRow = SheetRowBuilder.buildRow(
+      transaction: TransactionModel(
+        id: '1',
+        type: TransactionType.expense,
+        amount: 500,
+        category: 'other',
+        description: 'Test',
+        timestamp: DateTime(2024, 1, 15),
+        paymentSourceId: 's1',
+      ),
+      source: source,
+      metadataStartColumnIndex: 26,
+    );
+
+    final ranges = SheetRowBuilder.buildUpdateRanges(
+      sheetTitle: 'Sheet1',
+      rowNumber: 10,
+      fullRow: fullRow,
+      amountColumn: 'E',
+      metadataStartColumnIndex: 26,
+      amountSource: source,
+    );
+
+    expect(
+      ranges.any((r) => r.range == 'Sheet1!D10' && r.values?.first.first == ''),
+      isTrue,
+    );
+    expect(
+      ranges.any((r) => r.range == 'Sheet1!E10' && r.values?.first.first == 500),
+      isTrue,
+    );
   });
 }

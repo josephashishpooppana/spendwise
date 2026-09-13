@@ -1,5 +1,5 @@
 import 'package:spendwise_mobile/data/models/models.dart';
-import 'package:spendwise_mobile/integrations/sheet_row_builder.dart';
+import 'package:spendwise_mobile/integrations/sheet_column_letters.dart';
 
 /// One income or expense parsed from a single sheet cell.
 class ParsedSheetTransaction {
@@ -11,6 +11,7 @@ class ParsedSheetTransaction {
     required this.amount,
     required this.sourceNamePattern,
     required this.columnKey,
+    this.metadata = const SheetImportMetadata.empty(),
   });
 
   final int sheetRowNumber;
@@ -20,10 +21,120 @@ class ParsedSheetTransaction {
   final double amount;
   final String sourceNamePattern;
   final String columnKey;
+  final SheetImportMetadata metadata;
 
-  /// Stable ID so re-import skips duplicates.
-  String get importId =>
-      'sheet-$sheetRowNumber-$columnKey-${amount.toStringAsFixed(2)}';
+  String get importId {
+    final metaId = metadata.transactionId.trim();
+    if (metaId.isNotEmpty && _looksLikeUuid(metaId)) {
+      return metaId;
+    }
+    return 'sheet-$sheetRowNumber-$columnKey-${amount.toStringAsFixed(2)}';
+  }
+
+  static bool _looksLikeUuid(String value) {
+    return RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    ).hasMatch(value);
+  }
+}
+
+class SheetImportMetadata {
+  const SheetImportMetadata({
+    required this.transactionId,
+    required this.typeLabel,
+    required this.category,
+    required this.grossAmount,
+    required this.netAmount,
+    required this.cashback,
+    required this.sourceId,
+    required this.sourceName,
+    required this.sourceType,
+    required this.methodId,
+    required this.methodName,
+    required this.appId,
+    required this.appName,
+    required this.notes,
+    required this.parentTransactionId,
+    required this.syncSource,
+  });
+
+  const SheetImportMetadata.empty()
+      : transactionId = '',
+        typeLabel = '',
+        category = 'unknown',
+        grossAmount = null,
+        netAmount = null,
+        cashback = null,
+        sourceId = '',
+        sourceName = '',
+        sourceType = '',
+        methodId = '',
+        methodName = '',
+        appId = '',
+        appName = '',
+        notes = '',
+        parentTransactionId = '',
+        syncSource = 'sheet';
+
+  final String transactionId;
+  final String typeLabel;
+  final String category;
+  final double? grossAmount;
+  final double? netAmount;
+  final double? cashback;
+  final String sourceId;
+  final String sourceName;
+  final String sourceType;
+  final String methodId;
+  final String methodName;
+  final String appId;
+  final String appName;
+  final String notes;
+  final String parentTransactionId;
+  final String syncSource;
+
+  static const unknown = 'unknown';
+
+  static SheetImportMetadata fromRow(
+    List<Object?> row, {
+    required int metadataStartColumnIndex,
+  }) {
+    String cell(int offset) {
+      final idx = metadataStartColumnIndex + offset;
+      if (idx < 0 || idx >= row.length) return '';
+      final v = row[idx];
+      if (v == null) return '';
+      return v.toString().trim();
+    }
+
+    double? amountAt(int offset) {
+      final text = cell(offset);
+      if (text.isEmpty) return null;
+      return double.tryParse(text.replaceAll(',', ''));
+    }
+
+    String unknownIfEmpty(String value) =>
+        value.isEmpty ? unknown : value;
+
+    return SheetImportMetadata(
+      transactionId: cell(0),
+      typeLabel: cell(1),
+      category: unknownIfEmpty(cell(2)),
+      grossAmount: amountAt(3),
+      netAmount: amountAt(4),
+      cashback: amountAt(5),
+      sourceId: cell(6),
+      sourceName: cell(7),
+      sourceType: unknownIfEmpty(cell(8)),
+      methodId: cell(9),
+      methodName: unknownIfEmpty(cell(10)),
+      appId: cell(11),
+      appName: unknownIfEmpty(cell(12)),
+      notes: cell(13),
+      parentTransactionId: cell(14),
+      syncSource: cell(26).isEmpty ? 'sheet' : cell(26),
+    );
+  }
 }
 
 class SheetParser {
@@ -33,10 +144,19 @@ class SheetParser {
   static List<ParsedSheetTransaction> parseAllRows(
     List<List<Object?>> rows, {
     int firstDataRowNumber = 3,
+    required List<SheetColumnMapping> mappings,
+    required int metadataStartColumnIndex,
   }) {
     final parsed = <ParsedSheetTransaction>[];
     for (var i = 0; i < rows.length; i++) {
-      parsed.addAll(parseRow(rows[i], sheetRowNumber: firstDataRowNumber + i));
+      parsed.addAll(
+        parseRow(
+          rows[i],
+          sheetRowNumber: firstDataRowNumber + i,
+          mappings: mappings,
+          metadataStartColumnIndex: metadataStartColumnIndex,
+        ),
+      );
     }
     parsed.sort((a, b) {
       final byDate = a.date.compareTo(b.date);
@@ -49,50 +169,243 @@ class SheetParser {
   static List<ParsedSheetTransaction> parseRow(
     List<Object?> row, {
     required int sheetRowNumber,
+    required List<SheetColumnMapping> mappings,
+    required int metadataStartColumnIndex,
   }) {
     final date = parseDate(row.isNotEmpty ? row[0] : null, row.length > 1 ? row[1] : null);
     if (date == null) return const [];
 
     final rawDesc = cellString(row, 2);
     final description = cleanDescription(rawDesc);
+    if (description.isEmpty) return const [];
+
+    final metadata = SheetImportMetadata.fromRow(
+      row,
+      metadataStartColumnIndex: metadataStartColumnIndex,
+    );
     final results = <ParsedSheetTransaction>[];
 
-    for (final mapping in SheetRowBuilder.defaultMappings) {
-      final creditIdx = SheetRowBuilder.columnLetterToIndex(mapping.creditColumn);
-      final debitIdx = SheetRowBuilder.columnLetterToIndex(mapping.debitColumn);
+    for (final mapping in mappings) {
+      final creditIdx =
+          SheetColumnLetters.columnLetterToIndex(mapping.creditColumn);
+      final debitIdx =
+          SheetColumnLetters.columnLetterToIndex(mapping.debitColumn);
 
       final credit = parseAmount(row, creditIdx);
-      if (credit != null && credit > 0) {
-        results.add(
-          ParsedSheetTransaction(
-            sheetRowNumber: sheetRowNumber,
-            date: date,
-            description: description.isEmpty ? 'Income' : description,
-            type: TransactionType.income,
-            amount: credit,
-            sourceNamePattern: mapping.sourceNamePattern,
-            columnKey: mapping.creditColumn,
-          ),
-        );
-      }
+      _addCreditEntry(
+        results: results,
+        mapping: mapping,
+        credit: credit,
+        sheetRowNumber: sheetRowNumber,
+        date: date,
+        description: description,
+        metadata: metadata,
+      );
 
       final debit = parseAmount(row, debitIdx);
-      if (debit != null && debit > 0) {
-        results.add(
-          ParsedSheetTransaction(
-            sheetRowNumber: sheetRowNumber,
-            date: date,
-            description: description.isEmpty ? 'Expense' : description,
-            type: TransactionType.expense,
-            amount: debit,
-            sourceNamePattern: mapping.sourceNamePattern,
-            columnKey: mapping.debitColumn,
-          ),
-        );
-      }
+      _addDebitEntry(
+        results: results,
+        mapping: mapping,
+        debit: debit,
+        sheetRowNumber: sheetRowNumber,
+        date: date,
+        description: description,
+        metadata: metadata,
+      );
     }
 
     return results;
+  }
+
+  static void _addCreditEntry({
+    required List<ParsedSheetTransaction> results,
+    required SheetColumnMapping mapping,
+    required double? credit,
+    required int sheetRowNumber,
+    required DateTime date,
+    required String description,
+    required SheetImportMetadata metadata,
+  }) {
+    if (credit == null || credit <= 0) return;
+
+    results.add(
+      ParsedSheetTransaction(
+        sheetRowNumber: sheetRowNumber,
+        date: date,
+        description: description,
+        type: TransactionType.income,
+        amount: credit,
+        sourceNamePattern: mapping.sourceNamePattern,
+        columnKey: mapping.creditColumn,
+        metadata: metadata,
+      ),
+    );
+  }
+
+  static void _addDebitEntry({
+    required List<ParsedSheetTransaction> results,
+    required SheetColumnMapping mapping,
+    required double? debit,
+    required int sheetRowNumber,
+    required DateTime date,
+    required String description,
+    required SheetImportMetadata metadata,
+  }) {
+    if (debit == null || debit <= 0) return;
+
+    results.add(
+      ParsedSheetTransaction(
+        sheetRowNumber: sheetRowNumber,
+        date: date,
+        description: description,
+        type: TransactionType.expense,
+        amount: debit,
+        sourceNamePattern: mapping.sourceNamePattern,
+        columnKey: mapping.debitColumn,
+        metadata: metadata,
+      ),
+    );
+  }
+
+  /// App sources first; sheet header accounts fill gaps (e.g. Kotak not in app yet).
+  static List<SheetColumnMapping> buildImportMappings({
+    required List<PaymentSourceModel> sources,
+    required List<Object?> headerRow,
+    required List<Object?> subHeaderRow,
+    required int metadataStartColumnIndex,
+  }) {
+    final byDebitColumn = <String, SheetColumnMapping>{};
+
+    for (final source in sources) {
+      final mapping = source.toSheetMapping();
+      if (mapping != null) {
+        byDebitColumn[mapping.debitColumn] = mapping;
+      }
+    }
+
+    for (final mapping in mappingsFromSheetHeaders(
+      headerRow,
+      subHeaderRow,
+      metadataStartColumnIndex: metadataStartColumnIndex,
+    )) {
+      byDebitColumn.putIfAbsent(mapping.debitColumn, () => mapping);
+    }
+
+    return byDebitColumn.values.toList();
+  }
+
+  /// Row 1 name + row 2 Credit / Debit / Balance (or Bill Total) triplets.
+  static List<SheetColumnMapping> mappingsFromSheetHeaders(
+    List<Object?> headerRow,
+    List<Object?> subHeaderRow, {
+    int firstAccountColumnIndex = 3,
+    required int metadataStartColumnIndex,
+  }) {
+    final mappings = <SheetColumnMapping>[];
+    var col = firstAccountColumnIndex;
+    final maxCol = metadataStartColumnIndex < subHeaderRow.length
+        ? metadataStartColumnIndex
+        : subHeaderRow.length;
+
+    while (col + 2 < maxCol) {
+      final creditLabel = cellString(subHeaderRow, col).toLowerCase();
+      final debitLabel = cellString(subHeaderRow, col + 1).toLowerCase();
+      final thirdLabel = cellString(subHeaderRow, col + 2).toLowerCase();
+
+      if (creditLabel == 'credit' &&
+          debitLabel == 'debit' &&
+          (thirdLabel == 'balance' || thirdLabel == 'bill total')) {
+        final name = accountNameFromHeader(headerRow, col);
+        if (name.isNotEmpty && !_isSummaryAccountName(name)) {
+          mappings.add(
+            SheetColumnMapping(
+              sourceNamePattern: name,
+              creditColumn: SheetColumnLetters.indexToColumnLetter(col),
+              debitColumn: SheetColumnLetters.indexToColumnLetter(col + 1),
+              balanceColumn: SheetColumnLetters.indexToColumnLetter(col + 2),
+              sourceTypeKey: inferSourceType(
+                name: name,
+                billTotalColumn: thirdLabel == 'bill total',
+              ),
+            ),
+          );
+        }
+        col += 3;
+        continue;
+      }
+      col++;
+    }
+
+    return mappings;
+  }
+
+  static String accountNameFromHeader(List<Object?> headerRow, int col) {
+    for (var i = col; i >= 0; i--) {
+      final name = cellString(headerRow, i);
+      if (name.isNotEmpty) return name;
+    }
+    return '';
+  }
+
+  static bool _isSummaryAccountName(String name) {
+    final lower = name.toLowerCase();
+    return lower.contains('total in bank') || lower == 'total balance';
+  }
+
+  static const validSourceTypeKeys = {
+    'BANK',
+    'CREDIT_CARD',
+    'CASH',
+    'WALLET',
+    'DEBIT_CARD',
+  };
+
+  /// Normalizes metadata or sheet Source Type values to a known key.
+  static String? normalizeSourceTypeKey(String raw) {
+    if (raw.isEmpty || raw == SheetImportMetadata.unknown) return null;
+    final normalized = raw.trim().toUpperCase().replaceAll(' ', '_');
+    if (validSourceTypeKeys.contains(normalized)) return normalized;
+    switch (normalized) {
+      case 'BANK_ACCOUNT':
+        return 'BANK';
+      case 'CREDITCARD':
+        return 'CREDIT_CARD';
+      case 'DEBITCARD':
+        return 'DEBIT_CARD';
+      default:
+        return null;
+    }
+  }
+
+  static String inferSourceType({
+    required String name,
+    required bool billTotalColumn,
+    String? metadataSourceType,
+  }) {
+    final fromMetadata = normalizeSourceTypeKey(metadataSourceType ?? '');
+    if (fromMetadata != null) return fromMetadata;
+    if (billTotalColumn) return 'CREDIT_CARD';
+    final lower = name.toLowerCase();
+    if (lower.contains('cash')) return 'CASH';
+    if (lower.contains('wallet')) return 'WALLET';
+    if (lower.contains('credit card') || lower.endsWith(' cc')) {
+      return 'CREDIT_CARD';
+    }
+    if (lower.contains('debit card')) return 'DEBIT_CARD';
+    return 'BANK';
+  }
+
+  static bool mappingCoveredBySource(
+    SheetColumnMapping mapping,
+    List<PaymentSourceModel> sources,
+  ) {
+    for (final source in sources) {
+      if (source.sheetDebitColumn == mapping.debitColumn) return true;
+      if (matchSource(mapping.sourceNamePattern, [source]) != null) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Column A may hold weekday; column B holds Excel serial or date string.
@@ -120,6 +433,40 @@ class SheetParser {
     if (iso != null) {
       return DateTime(iso.year, iso.month, iso.day);
     }
+
+    final slashParts = text.split('/');
+    if (slashParts.length == 3) {
+      final d1 = int.tryParse(slashParts[0].trim());
+      final d2 = int.tryParse(slashParts[1].trim());
+      final y = int.tryParse(slashParts[2].trim());
+      if (d1 != null && d2 != null && y != null) {
+        // Prefer DD/MM/YYYY (common in India), fall back to MM/DD/YYYY.
+        if (d1 > 12) {
+          return DateTime(y, d2, d1);
+        }
+        if (d2 > 12) {
+          return DateTime(y, d1, d2);
+        }
+        return DateTime(y, d2, d1);
+      }
+    }
+
+    final dashParts = text.split('-');
+    if (dashParts.length == 3) {
+      final d1 = int.tryParse(dashParts[0].trim());
+      final d2 = int.tryParse(dashParts[1].trim());
+      final y = int.tryParse(dashParts[2].trim());
+      if (d1 != null && d2 != null && y != null && y > 1900) {
+        if (d1 > 12) {
+          return DateTime(y, d2, d1);
+        }
+        if (d2 > 12) {
+          return DateTime(y, d1, d2);
+        }
+        return DateTime(y, d2, d1);
+      }
+    }
+
     return null;
   }
 
@@ -154,6 +501,9 @@ class SheetParser {
   }
 
   static String inferCategory(ParsedSheetTransaction entry) {
+    if (entry.metadata.category != SheetImportMetadata.unknown) {
+      return entry.metadata.category;
+    }
     final lower = entry.description.toLowerCase();
     if (entry.type == TransactionType.income) {
       if (lower.startsWith('cashback') || lower.contains('cashback')) {
@@ -220,6 +570,11 @@ class SheetImportResult {
     this.imported = 0,
     this.skipped = 0,
     this.unmatchedSources = const {},
+    this.sourcesCreated = 0,
+    this.sheetRowsRead = 0,
+    this.parsedCount = 0,
+    this.minImportedSheetRow,
+    this.maxImportedSheetRow,
   });
 
   final bool success;
@@ -227,4 +582,9 @@ class SheetImportResult {
   final int imported;
   final int skipped;
   final Set<String> unmatchedSources;
+  final int sourcesCreated;
+  final int sheetRowsRead;
+  final int parsedCount;
+  final int? minImportedSheetRow;
+  final int? maxImportedSheetRow;
 }

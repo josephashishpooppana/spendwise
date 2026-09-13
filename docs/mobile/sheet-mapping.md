@@ -11,7 +11,23 @@
 
 ## Layout Type
 
-**Running balance sheet** with per-account Credit / Debit / Balance (or Bill Total for credit cards) columns. Row 1–2 are headers; data starts at row 3. Balance and total columns use formulas — the app writes **data rows only** (Credit/Debit cells + metadata), never overwrites formula columns.
+**Running balance sheet** with per-account Credit / Debit / Balance (or Bill Total for credit cards) columns. Row 1–2 are headers; data starts at row 3. On **insert**, the app writes balance/bill formulas plus **Total In Bank** and **Total Balance** formulas; updates only touch data cells (Credit/Debit + metadata), never overwriting existing formula columns on other rows.
+
+## Balance formulas (written on insert)
+
+| Account type | Balance / Bill Total formula (row N) |
+|---|---|
+| BANK, CASH, WALLET | `=Bal(N-1)-Debit(N)+Credit(N)` |
+| CREDIT_CARD | `=Bill(N-1)+Debit(N)-Credit(N)` |
+
+Summary columns (discovered from row 1 headers, cached in `sync_state`):
+
+| Header | Default col | Formula on row N |
+|---|---|---|
+| Total In Bank | M | Sum of all **BANK** balance columns on that row |
+| Total Balance | Z | Sum of **BANK** balances − sum of **CREDIT_CARD** bill totals (cash/wallets excluded) |
+
+Credit card **credit limit** is stored in the app only — there is no sheet column.
 
 ## Column Map (Sheet1)
 
@@ -44,9 +60,60 @@
 | Y | | Balance | **Formula — do not write** |
 | Z | Total Balance | — | **Formula — do not write** |
 
+## Metadata columns (AA–BA)
+
+Row 1 headers for app sync metadata. Row 2 stays blank for these columns. Data rows (from row 3) are filled by the app on sync. Template file: [Daily Expenses.xlsx](./Daily%20Expenses.xlsx).
+
+| Col | Header (row 1) | App field |
+|---|---|---|
+| AA | Transaction ID | `Transaction.id` (UUID) |
+| AB | Type | `Income` / `Expense` |
+| AC | Category | `Transaction.category` |
+| AD | Gross Amount | Full amount before cashback |
+| AE | Net Amount | Amount written to Credit/Debit column |
+| AF | Cashback | `Transaction.cashbackReceived` |
+| AG | Source ID | `PaymentSource.id` |
+| AH | Source Name | `PaymentSource.name` |
+| AI | Source Type | `BANK` / `CREDIT_CARD` / `CASH` |
+| AJ | Method ID | `PaymentMethod.id` |
+| AK | Method Name | `PaymentMethod.name` |
+| AL | App ID | `PaymentApp.id` |
+| AM | App Name | `PaymentApp.name` |
+| AN | Notes | `Transaction.notes` |
+| AO | Parent Txn ID | Cashback or split reimbursement → original expense |
+| AP | Split ID | `BillSplit.id` |
+| AQ | Split Type | `equal` / `custom` |
+| AR | Split Summary | Human-readable member shares |
+| AS | Split Settled | `Yes` / `No` |
+| AT | Split Details (IDs) | `contactId:amount\|…` |
+| AU | My Share | Payer share on split expense |
+| AV | Group ID | `Group.id` |
+| AW | Group Name | `Group.name` |
+| AX | Settlement Contact ID | On reimbursement income rows |
+| AY | Settlement Contact Name | On reimbursement income rows |
+| AZ | Updated At | ISO datetime |
+| BA | Sync Source | `app` (future: `sheet` for bidirectional sync) |
+
 ## Payment Source → Column Mapping
 
-Configure in app settings (`SheetColumnMapping`); defaults match the user's sheet:
+Each payment source stores its sheet columns in the local database (`sheet_credit_column`, `sheet_debit_column`, `sheet_balance_column`). The seven default accounts are pre-mapped to columns D–Y; metadata starts at column **AA** (index 26).
+
+### Adding a new account (automatic)
+
+When you create a new payment source in **Accounts**:
+
+1. The app inserts **3 columns** in Google Sheet immediately before the metadata block (requires Google sign-in).
+2. Row 1: account name · Row 2: Credit · Debit · Balance (or **Bill Total** for credit cards).
+3. Column letters and **source type** are saved on the payment source — sync, import, and balance formulas use them dynamically.
+4. The metadata block (Transaction ID … Sync Source) shifts right by 3 columns; the app discovers the new start index from the **Transaction ID** header on sync/import.
+
+On **insert sync**, every mapped source gets a balance/bill formula in its column (bank/cash/wallet: running balance; credit card: bill total). **Source Type** is written to metadata column AI on each row.
+
+On **import**, accounts are discovered from row 1–2 headers (including accounts like **Axis Bank Kochi one** added manually or via the app). Existing sources are reconciled with sheet column letters and type (Balance vs Bill Total). When metadata **Source Type** is present on a row, it updates the app source type.
+
+**Note:** When new account columns are inserted before metadata, **Total In Bank** and **Total Balance** formulas on **newly inserted rows** include all mapped accounts dynamically. Older sheet rows keep their existing M/Z formulas until edited manually.
+
+Legacy hardcoded defaults (for reference):
 
 | Payment source name (contains) | Source type | Credit col | Debit col |
 |---|---|---|---|
@@ -60,6 +127,31 @@ Configure in app settings (`SheetColumnMapping`); defaults match the user's shee
 
 Cashback income rows: append as separate row with description `"Cashback: {original}"`, credit to the cashback credit source column.
 
+## Credit card fields in app
+
+For `CREDIT_CARD` payment sources, the app stores:
+
+| Field | Meaning |
+|---|---|
+| Bill total (`balance`) | Amount owed on the card (matches sheet **Bill Total** column) |
+| Credit limit | Total card limit; **available credit** = limit − bill |
+| Statement day | Day of month (1–31) when the billing cycle closes |
+
+Credit on the sheet = bill payment (reduces bill). Debit on the sheet = card usage (increases bill).
+
+**Net balance** in the app matches sheet **Total Balance (Z)**: bank balances − credit card bill totals. Cash, wallets, and debit cards are excluded from net balance (debit cards mirror linked banks).
+
+When adding an expense, payment sources are filtered to those with enough available cash or credit for the entered amount.
+
+### Credit card bill payment
+
+Category **Credit card payment** (`credit_card_payment`) on a **bank** expense creates **two sheet rows** on sync:
+
+1. **Expense** on the selected bank (debit column)
+2. **Income** on the target credit card (credit column — reduces bill), description `Bill payment: {your description}`
+
+Both transactions are linked in the app via paired notes for delete/reversal.
+
 Split metadata: append to column C suffix `[split: contact names]` or store in notes column if extended later.
 
 ## Row Export Format
@@ -70,7 +162,8 @@ For each unsynced `Transaction`, produce one sheet row:
 A = weekday name (Monday, Tuesday, …)
 B = Excel serial date (days since 1899-12-30)
 C = description (+ optional split/cashback note)
-{D..AS} = empty except the matched source's Credit OR Debit cell
+{D..Z} = Credit/Debit amount for matched source; balance/bill + M/Z formulas written on insert
+{AA..BA} = transaction metadata (IDs, names, split, etc.)
 ```
 
 - **EXPENSE:** write net amount (`amount - cashbackReceived`) in **Debit** column for the payment source.
@@ -79,24 +172,39 @@ C = description (+ optional split/cashback note)
 
 ## Sync Strategy
 
-1. Track exported transaction UUIDs in local `sync_state.exported_transaction_ids` (JSON array).
-2. On daily sync, query transactions where `id NOT IN exported_ids` OR `updated_at > last_sync_at`.
-3. Use Sheets API `spreadsheets.values.append` on `Sheet1!A:AS` with `INSERT_ROWS`.
-4. Resolve sheet name at runtime via `spreadsheets.get` (gid → sheet title).
-5. Never import sheet → app on sync (sync is append-only). Use **Import from Google Sheet** in Settings for a one-time full import.
+1. Local registry file `spendwise_sheet_sync.json` (beside SQLite DB) tracks each synced transaction:
+   - `sheetRowNumber` — row in Sheet1
+   - `syncedUpdatedAt` — app `updated_at` when last pushed
+   - `pendingDeletes` — tombstones for app-deleted rows removed on next sync
+2. **Sync now** (app → sheet only; sheet is not edited manually):
+   - **Delete** queued sheet rows first (bottom-up), then renumber registry entries
+   - **Insert** new transactions at the correct **date position** (`insertDimension` ROWS), writing partial ranges + balance/M/Z formulas via `batchUpdate`
+   - **Update** existing sheet row when app `updated_at` is newer than `syncedUpdatedAt`
+   - **Move** row when transaction date changes (delete old row + insert at new date position with formulas)
+   - **Skip** unchanged transactions already synced
+3. Uses Sheets API row insert/delete for ordering, `batchUpdate` for inserts (data + formulas) and updates (data only).
+4. Cashback income rows insert immediately below the parent expense in the same sync batch.
+5. Range: `Sheet1!A:BA` with metadata in AA–BA.
+6. **Import from Google Sheet** (sheet → app): separate action; only rows with non-empty column C (description). Missing metadata columns import as `unknown`.
 
 ## Drive Backup
 
-Upload `spendwise-backup-YYYY-MM-DD.json` containing full local DB export (all tables) to Google Drive folder `SpendWise Backups`.
+Upload `spendwise-backup-YYYY-Www.json` (one file per ISO week) containing full local DB export to Google Drive folder `SpendWise Backups`. Syncing again in the same week replaces that file; a new file is created when the week changes.
 
 ## Import from Google Sheet (app ← sheet)
 
 In the app: **Settings → Import from Google Sheet**
 
-- Reads all data rows from `Sheet1` starting at row 3 (`A3:AS`)
-- Each non-empty **Credit** or **Debit** cell becomes one income/expense transaction
-- Maps columns to accounts (ICICI, BOB, HDFC, credit cards, cash) per table above
-- Replaces local transactions and recalculates account balances
-- Marks imported rows so **Sync now** will not duplicate them back to the sheet
+- Reads all data rows from `Sheet1` starting at row 3 (`A3:BA`)
+- **Skips rows with empty description (column C)**
+- Maps columns to accounts in the app **and** row 1–2 sheet headers (Credit / Debit / Balance or Bill Total)
+- **New accounts from headers** (e.g. Kotak Bank) are added automatically before import
+- **Credit and debit must be greater than zero** to import a transaction
+- Metadata columns AA–BA: uses values when present; missing fields stored as `unknown`
+- Registers each imported row in `spendwise_sheet_sync.json` with sheet row number
+- **Opening balances (first import / Replace & import):** for each account, reads that account’s **last qualifying row** scanning bottom-up:
+  - Balance/Bill Total cell has a numeric value, and the row has **no description (column C)** or **no credit/debit > 0** for that account (balance-only / carry-forward row)
+  - Fallback: last row with credit/debit > 0 for that account, then last row with any balance value
+  - Import message lists each account → sheet row → amount
 
 Requires Google sign-in (same as sync).

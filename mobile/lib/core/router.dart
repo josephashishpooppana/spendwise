@@ -1,8 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:spendwise_mobile/features/analytics/analytics_screen.dart';
 import 'package:spendwise_mobile/features/accounts/accounts_screens.dart';
 import 'package:spendwise_mobile/features/dashboard/dashboard_screen.dart';
 import 'package:spendwise_mobile/features/settings/settings_screen.dart';
+import 'package:spendwise_mobile/features/splits/split_form_screen.dart';
 import 'package:spendwise_mobile/features/splits/splits_screens.dart';
 import 'package:spendwise_mobile/features/transactions/transaction_form_screen.dart';
 import 'package:spendwise_mobile/features/transactions/transactions_screen.dart';
@@ -26,6 +28,10 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const TransactionsScreen(),
           ),
           GoRoute(
+            path: '/analytics',
+            builder: (context, state) => const AnalyticsScreen(),
+          ),
+          GoRoute(
             path: '/sources',
             builder: (context, state) => const AccountsHubScreen(),
           ),
@@ -41,7 +47,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/transactions/new',
-        builder: (context, state) => const TransactionFormScreen(),
+        builder: (context, state) => TransactionFormScreen(
+          cloneFromId: state.uri.queryParameters['cloneFrom'],
+        ),
       ),
       GoRoute(
         path: '/transactions/:id',
@@ -57,7 +65,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/transactions/:id/split',
-        builder: (context, state) => AddSplitScreen(
+        builder: (context, state) => SplitFormScreen(
           transactionId: state.pathParameters['id']!,
         ),
       ),
@@ -102,8 +110,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ContactFormScreen(),
       ),
       GoRoute(
+        path: '/contacts/:id',
+        builder: (context, state) => ContactFormScreen(
+          contactId: state.pathParameters['id'],
+        ),
+      ),
+      GoRoute(
         path: '/groups',
         builder: (context, state) => const GroupsScreen(),
+      ),
+      GoRoute(
+        path: '/groups/new',
+        builder: (context, state) => const GroupFormScreen(),
+      ),
+      GoRoute(
+        path: '/groups/:id',
+        builder: (context, state) => GroupFormScreen(
+          groupId: state.pathParameters['id'],
+        ),
       ),
     ],
   );

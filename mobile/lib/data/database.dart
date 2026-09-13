@@ -5,6 +5,8 @@ import 'package:sqflite/sqflite.dart';
 
 import 'package:spendwise_mobile/data/models/models.dart';
 import 'package:spendwise_mobile/data/seed_data.dart';
+import 'package:uuid/uuid.dart';
+import 'package:spendwise_mobile/integrations/sheet_column_letters.dart';
 
 class AppDatabase {
   AppDatabase._(this._db);
@@ -29,10 +31,51 @@ class AppDatabase {
     final dbPath = path ?? p.join(await getDatabasesPath(), 'spendwise.db');
     final db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 6,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute(
+            'ALTER TABLE bill_splits ADD COLUMN my_share REAL',
+          );
+        }
+        if (oldVersion < 3) {
+          await database.execute('''
+            CREATE TABLE split_settlements (
+              id TEXT PRIMARY KEY,
+              bill_split_id TEXT NOT NULL,
+              contact_id TEXT NOT NULL,
+              amount REAL NOT NULL,
+              payment_source_id TEXT NOT NULL,
+              income_transaction_id TEXT NOT NULL,
+              paid_at TEXT NOT NULL
+            )
+          ''');
+        }
+        if (oldVersion < 4) {
+          await database.execute(
+            'ALTER TABLE payment_sources ADD COLUMN sheet_credit_column TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE payment_sources ADD COLUMN sheet_debit_column TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE payment_sources ADD COLUMN sheet_balance_column TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE sync_state ADD COLUMN metadata_start_column_index INTEGER NOT NULL DEFAULT 26',
+          );
+          await _backfillLegacySheetColumns(database);
+        }
+        if (oldVersion < 5) {
+          await _migrateToV5(database);
+        }
+        if (oldVersion < 6) {
+          await _migrateToV6(database);
+        }
       },
     );
     _instance = AppDatabase._(db);
@@ -42,10 +85,51 @@ class AppDatabase {
   static Future<AppDatabase> openMemory() async {
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 1,
+      version: 6,
       onCreate: (database, version) async {
         await _createSchema(database);
         await SeedData.seed(database);
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute(
+            'ALTER TABLE bill_splits ADD COLUMN my_share REAL',
+          );
+        }
+        if (oldVersion < 3) {
+          await database.execute('''
+            CREATE TABLE split_settlements (
+              id TEXT PRIMARY KEY,
+              bill_split_id TEXT NOT NULL,
+              contact_id TEXT NOT NULL,
+              amount REAL NOT NULL,
+              payment_source_id TEXT NOT NULL,
+              income_transaction_id TEXT NOT NULL,
+              paid_at TEXT NOT NULL
+            )
+          ''');
+        }
+        if (oldVersion < 4) {
+          await database.execute(
+            'ALTER TABLE payment_sources ADD COLUMN sheet_credit_column TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE payment_sources ADD COLUMN sheet_debit_column TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE payment_sources ADD COLUMN sheet_balance_column TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE sync_state ADD COLUMN metadata_start_column_index INTEGER NOT NULL DEFAULT 26',
+          );
+          await _backfillLegacySheetColumns(database);
+        }
+        if (oldVersion < 5) {
+          await _migrateToV5(database);
+        }
+        if (oldVersion < 6) {
+          await _migrateToV6(database);
+        }
       },
     );
     return AppDatabase._(db);
@@ -85,7 +169,19 @@ class AppDatabase {
         source_type_key TEXT NOT NULL,
         balance REAL NOT NULL DEFAULT 0,
         linked_bank_source_id TEXT,
-        is_active INTEGER NOT NULL DEFAULT 1
+        is_active INTEGER NOT NULL DEFAULT 1,
+        sheet_credit_column TEXT,
+        sheet_debit_column TEXT,
+        sheet_balance_column TEXT,
+        credit_limit REAL,
+        statement_day INTEGER
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE description_favorites (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
       )
     ''');
     await db.execute('''
@@ -150,7 +246,19 @@ class AppDatabase {
         split_type TEXT NOT NULL,
         split_details TEXT NOT NULL,
         group_id TEXT,
-        is_settled INTEGER NOT NULL DEFAULT 0
+        is_settled INTEGER NOT NULL DEFAULT 0,
+        my_share REAL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE split_settlements (
+        id TEXT PRIMARY KEY,
+        bill_split_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        payment_source_id TEXT NOT NULL,
+        income_transaction_id TEXT NOT NULL,
+        paid_at TEXT NOT NULL
       )
     ''');
     await db.execute('''
@@ -162,7 +270,10 @@ class AppDatabase {
         google_account_email TEXT,
         sheet_id TEXT NOT NULL,
         sheet_gid TEXT NOT NULL,
-        sheet_name TEXT NOT NULL
+        sheet_name TEXT NOT NULL,
+        metadata_start_column_index INTEGER NOT NULL DEFAULT 26,
+        total_in_bank_column TEXT NOT NULL DEFAULT 'M',
+        total_balance_column TEXT NOT NULL DEFAULT 'Z'
       )
     ''');
   }
@@ -325,6 +436,17 @@ class AppDatabase {
     return TransactionModel.fromMap(rows.first);
   }
 
+  Future<TransactionModel?> findTransactionByNotes(String notes) async {
+    final rows = await _db.query(
+      'transactions',
+      where: 'notes = ?',
+      whereArgs: [notes],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return TransactionModel.fromMap(rows.first);
+  }
+
   Future<bool> transactionExists(String id) async {
     final rows = await _db.query(
       'transactions',
@@ -343,6 +465,7 @@ class AppDatabase {
   }
 
   Future<void> clearAllTransactions() async {
+    await _db.delete('split_settlements');
     await _db.delete('cashbacks');
     await _db.delete('bill_splits');
     await _db.delete('transactions');
@@ -352,12 +475,72 @@ class AppDatabase {
     await _db.update('payment_sources', {'balance': 0});
   }
 
+  Future<List<DescriptionFavorite>> getDescriptionFavorites() async {
+    final rows = await _db.query(
+      'description_favorites',
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(DescriptionFavorite.fromMap).toList();
+  }
+
+  Future<void> addDescriptionFavorite(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    await _db.insert(
+      'description_favorites',
+      DescriptionFavorite(
+        id: const Uuid().v4(),
+        text: trimmed,
+        createdAt: DateTime.now(),
+      ).toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<void> removeDescriptionFavorite(String id) async {
+    await _db.delete(
+      'description_favorites',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<List<String>> getFrequentDescriptions({int limit = 10}) async {
+    final rows = await _db.rawQuery('''
+      SELECT description, COUNT(*) as cnt
+      FROM transactions
+      WHERE description IS NOT NULL AND TRIM(description) != ''
+      GROUP BY LOWER(TRIM(description))
+      ORDER BY cnt DESC, description ASC
+      LIMIT ?
+    ''', [limit]);
+    return rows
+        .map((r) => (r['description'] as String?)?.trim() ?? '')
+        .where((d) => d.isNotEmpty)
+        .toList();
+  }
+
   Future<void> insertTransaction(TransactionModel txn) async {
     await _db.insert(
       'transactions',
       txn.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Future<void> insertTransactionsBatch(List<TransactionModel> txns) async {
+    if (txns.isEmpty) return;
+    await _db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final t in txns) {
+        batch.insert(
+          'transactions',
+          t.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
   }
 
   Future<void> updateTransaction(TransactionModel txn) async {
@@ -370,9 +553,14 @@ class AppDatabase {
   }
 
   Future<void> deleteTransaction(String id) async {
+    final split = await getBillSplitForTransaction(id);
+    if (split != null) {
+      await deleteBillSplit(split.id);
+    } else {
+      await _db.delete('bill_splits', where: 'transaction_id = ?', whereArgs: [id]);
+    }
     await _db.delete('transactions', where: 'id = ?', whereArgs: [id]);
     await _db.delete('cashbacks', where: 'transaction_id = ?', whereArgs: [id]);
-    await _db.delete('bill_splits', where: 'transaction_id = ?', whereArgs: [id]);
   }
 
   Future<List<CashbackModel>> getCashbacksForTransaction(String txnId) async {
@@ -407,6 +595,17 @@ class AppDatabase {
 
   Future<void> deleteContact(String id) async {
     await _db.delete('contacts', where: 'id = ?', whereArgs: [id]);
+    final groups = await getGroups();
+    for (final group in groups) {
+      if (!group.memberIds.contains(id)) continue;
+      await upsertGroup(
+        GroupModel(
+          id: group.id,
+          name: group.name,
+          memberIds: group.memberIds.where((m) => m != id).toList(),
+        ),
+      );
+    }
   }
 
   Future<List<GroupModel>> getGroups() async {
@@ -449,8 +648,56 @@ class AppDatabase {
     );
   }
 
+  Future<void> deleteSettlementIncomeTransaction(String incomeTransactionId) async {
+    await _db.delete(
+      'split_settlements',
+      where: 'income_transaction_id = ?',
+      whereArgs: [incomeTransactionId],
+    );
+    await _db.delete(
+      'transactions',
+      where: 'id = ?',
+      whereArgs: [incomeTransactionId],
+    );
+  }
+
   Future<void> deleteBillSplit(String id) async {
+    await _db.delete(
+      'split_settlements',
+      where: 'bill_split_id = ?',
+      whereArgs: [id],
+    );
     await _db.delete('bill_splits', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<SplitSettlementModel>> getSplitSettlementsForBillSplit(
+    String billSplitId,
+  ) async {
+    final rows = await _db.query(
+      'split_settlements',
+      where: 'bill_split_id = ?',
+      whereArgs: [billSplitId],
+      orderBy: 'paid_at ASC',
+    );
+    return rows.map(SplitSettlementModel.fromMap).toList();
+  }
+
+  Future<List<SplitSettlementModel>> getAllSplitSettlements() async {
+    final rows = await _db.query('split_settlements', orderBy: 'paid_at ASC');
+    return rows.map(SplitSettlementModel.fromMap).toList();
+  }
+
+  Future<void> insertSplitSettlement(SplitSettlementModel settlement) async {
+    await _db.insert(
+      'split_settlements',
+      settlement.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, BillSplitModel>> getBillSplitsByTransactionId() async {
+    final splits = await getBillSplits();
+    return {for (final s in splits) s.transactionId: s};
   }
 
   Future<SyncStateModel> getSyncState() async {
@@ -487,6 +734,7 @@ class AppDatabase {
       'contacts': await table('contacts'),
       'groups': await table('groups'),
       'billSplits': await table('bill_splits'),
+      'splitSettlements': await table('split_settlements'),
       'syncState': await table('sync_state'),
     };
   }
@@ -495,15 +743,54 @@ class AppDatabase {
     return jsonEncode(await exportAll());
   }
 
-  Future<List<TransactionModel>> getUnsyncedTransactions(
-    SyncStateModel state,
-  ) async {
-    final all = await getTransactions();
-    return all.where((t) {
-      if (!state.exportedTransactionIds.contains(t.id)) return true;
-      if (state.lastSyncedAt == null) return true;
-      final updated = t.updatedAt ?? t.timestamp;
-      return updated.isAfter(state.lastSyncedAt!);
-    }).toList();
+  Future<List<PaymentSourceModel>> getPaymentSourcesMissingSheetMapping({
+    bool all = false,
+  }) async {
+    final sources = await getPaymentSources(all: all);
+    return sources.where((s) => !s.hasSheetMapping).toList();
+  }
+
+  static Future<void> _migrateToV5(Database database) async {
+    await database.execute(
+      'ALTER TABLE payment_sources ADD COLUMN credit_limit REAL',
+    );
+    await database.execute(
+      'ALTER TABLE payment_sources ADD COLUMN statement_day INTEGER',
+    );
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS description_favorites (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  static Future<void> _migrateToV6(Database database) async {
+    await database.execute(
+      "ALTER TABLE sync_state ADD COLUMN total_in_bank_column TEXT NOT NULL DEFAULT 'M'",
+    );
+    await database.execute(
+      "ALTER TABLE sync_state ADD COLUMN total_balance_column TEXT NOT NULL DEFAULT 'Z'",
+    );
+  }
+
+  static Future<void> _backfillLegacySheetColumns(Database database) async {
+    final rows = await database.query('payment_sources');
+    for (final row in rows) {
+      final name = row['name'] as String;
+      final cols = LegacySheetColumnBackfill.columnsForName(name);
+      if (cols == null) continue;
+      await database.update(
+        'payment_sources',
+        {
+          'sheet_credit_column': cols.$1,
+          'sheet_debit_column': cols.$2,
+          'sheet_balance_column': cols.$3,
+        },
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
   }
 }
