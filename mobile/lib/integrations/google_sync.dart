@@ -626,10 +626,12 @@ class SyncService {
             );
           }
 
+          // Insert top-down (low row first). Bottom-up insert shifts already-written
+          // rows down and leaves blank rows between transactions.
           planned.sort((a, b) {
-            final byRow = b.targetRow.compareTo(a.targetRow);
+            final byRow = a.targetRow.compareTo(b.targetRow);
             if (byRow != 0) return byRow;
-            return b.row.txn.timestamp.compareTo(a.row.txn.timestamp);
+            return a.row.txn.timestamp.compareTo(b.row.txn.timestamp);
           });
 
           for (final plan in planned) {

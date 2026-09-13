@@ -67,6 +67,15 @@ void main() {
       expect(second, 6);
     });
 
+    test('multi insert order is ascending so lower rows are not shifted again', () {
+      final planned = [
+        (target: 1859, label: 'snacks'),
+        (target: 1858, label: 'metro'),
+      ]..sort((a, b) => a.target.compareTo(b.target));
+
+      expect(planned.map((p) => p.target).toList(), [1858, 1859]);
+    });
+
     test('today then yesterday need distinct targets when second is reserved', () {
       final rows = <List<Object?>>[
         ['Monday', DateTime(2026, 1, 1), 'Older'],
