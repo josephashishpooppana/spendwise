@@ -66,7 +66,7 @@ class SheetBalanceReader {
   }) {
     final result = <String, PerSourceBalance>{};
     for (final source in sources) {
-      final reading = _findLastBalanceForSource(
+      final reading = balanceForSource(
         rows: rows,
         source: source,
         firstDataRowNumber: firstDataRowNumber,
@@ -78,11 +78,145 @@ class SheetBalanceReader {
     return result;
   }
 
-  static PerSourceBalance? _findLastBalanceForSource({
+  /// Best balance reading for one source (cash/wallet use activity row first).
+  static PerSourceBalance? balanceForSource({
+    required List<List<Object?>> rows,
+    required PaymentSourceModel source,
+    int firstDataRowNumber = 3,
+    int? preferSheetRowNumber,
+  }) {
+    if (_isCashLike(source)) {
+      final fromActivity = _balanceFromLastActivityRow(
+        rows: rows,
+        source: source,
+        firstDataRowNumber: firstDataRowNumber,
+      );
+      if (fromActivity != null) return fromActivity;
+
+      if (preferSheetRowNumber != null) {
+        final fromRow = _balanceOnSheetRow(
+          rows: rows,
+          source: source,
+          sheetRowNumber: preferSheetRowNumber,
+          firstDataRowNumber: firstDataRowNumber,
+        );
+        if (fromRow != null) return fromRow;
+      }
+    }
+
+    return _scanBottomUpForBalance(
+      rows: rows,
+      source: source,
+      firstDataRowNumber: firstDataRowNumber,
+    );
+  }
+
+  static bool _isCashLike(PaymentSourceModel source) =>
+      source.sourceTypeKey == 'CASH' || source.sourceTypeKey == 'WALLET';
+
+  static PerSourceBalance? _balanceOnSheetRow({
+    required List<List<Object?>> rows,
+    required PaymentSourceModel source,
+    required int sheetRowNumber,
+    required int firstDataRowNumber,
+  }) {
+    final idx = sheetRowNumber - firstDataRowNumber;
+    if (idx < 0 || idx >= rows.length) return null;
+    final amounts = balancesForSources(row: rows[idx], sources: [source]);
+    final amount = amounts[source.id];
+    if (amount == null) return null;
+    return PerSourceBalance(amount: amount, sheetRowNumber: sheetRowNumber);
+  }
+
+  /// Last row with description + credit/debit for this source and a balance value.
+  static PerSourceBalance? _balanceFromLastActivityRow({
     required List<List<Object?>> rows,
     required PaymentSourceModel source,
     required int firstDataRowNumber,
   }) {
+    final cells = _sourceColumnIndices(source);
+    if (cells == null) return null;
+
+    for (var i = rows.length - 1; i >= 0; i--) {
+      final row = rows[i];
+      final sheetRowNumber = firstDataRowNumber + i;
+      final reading = _readRowCells(row, cells);
+
+      if (!reading.hasDescription && reading.hasCreditDebit) {
+        continue;
+      }
+      if (reading.hasDescription &&
+          reading.hasCreditDebit &&
+          reading.balance != null) {
+        return PerSourceBalance(
+          amount: reading.balance!,
+          sheetRowNumber: sheetRowNumber,
+        );
+      }
+    }
+    return null;
+  }
+
+  static PerSourceBalance? _scanBottomUpForBalance({
+    required List<List<Object?>> rows,
+    required PaymentSourceModel source,
+    required int firstDataRowNumber,
+  }) {
+    final cells = _sourceColumnIndices(source);
+    if (cells == null) return null;
+
+    PerSourceBalance? fallbackAnyBalance;
+
+    for (var i = rows.length - 1; i >= 0; i--) {
+      final row = rows[i];
+      final sheetRowNumber = firstDataRowNumber + i;
+      final reading = _readRowCells(row, cells);
+
+      if (reading.balance != null) {
+        fallbackAnyBalance ??= PerSourceBalance(
+          amount: reading.balance!,
+          sheetRowNumber: sheetRowNumber,
+        );
+      }
+
+      if (reading.balance == null) continue;
+
+      // Blank row with inherited credit/debit from sheet insert — skip.
+      if (!reading.hasDescription && reading.hasCreditDebit) continue;
+
+      return PerSourceBalance(
+        amount: reading.balance!,
+        sheetRowNumber: sheetRowNumber,
+      );
+    }
+
+    return fallbackAnyBalance;
+  }
+
+  static _RowCellReading _readRowCells(
+    List<Object?> row,
+    _SourceColumnIndices cells,
+  ) {
+    final balance = cells.balanceIdx >= 0 && cells.balanceIdx < row.length
+        ? SheetParser.parseAmountValue(row[cells.balanceIdx])
+        : null;
+    final credit = cells.creditIdx >= 0 && cells.creditIdx < row.length
+        ? SheetParser.parseAmountValue(row[cells.creditIdx])
+        : null;
+    final debit = cells.debitIdx >= 0 && cells.debitIdx < row.length
+        ? SheetParser.parseAmountValue(row[cells.debitIdx])
+        : null;
+    final desc = row.length > 2 ? row[2]?.toString().trim() ?? '' : '';
+
+    return _RowCellReading(
+      balance: balance,
+      hasCreditDebit:
+          (credit != null && credit > 0) || (debit != null && debit > 0),
+      hasDescription: desc.isNotEmpty,
+    );
+  }
+
+  static _SourceColumnIndices? _sourceColumnIndices(PaymentSourceModel source) {
     final balanceCol = source.sheetBalanceColumn;
     if (balanceCol == null || balanceCol.isEmpty) return null;
 
@@ -96,57 +230,11 @@ class SheetBalanceReader {
         ? SheetColumnLetters.columnLetterToIndex(source.sheetDebitColumn!)
         : -1;
 
-    PerSourceBalance? fallbackTxnRow;
-    PerSourceBalance? fallbackAnyBalance;
-
-    for (var i = rows.length - 1; i >= 0; i--) {
-      final row = rows[i];
-      final sheetRowNumber = firstDataRowNumber + i;
-
-      final balance = balanceIdx < row.length
-          ? SheetParser.parseAmountValue(row[balanceIdx])
-          : null;
-      final credit = creditIdx >= 0 && creditIdx < row.length
-          ? SheetParser.parseAmountValue(row[creditIdx])
-          : null;
-      final debit = debitIdx >= 0 && debitIdx < row.length
-          ? SheetParser.parseAmountValue(row[debitIdx])
-          : null;
-
-      if (balance != null) {
-        fallbackAnyBalance ??=
-            PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
-      }
-
-      final hasCreditDebit =
-          (credit != null && credit > 0) || (debit != null && debit > 0);
-      final desc =
-          row.length > 2 ? row[2]?.toString().trim() ?? '' : '';
-      final hasDescription = desc.isNotEmpty;
-
-      if (hasDescription && hasCreditDebit && balance != null) {
-        fallbackTxnRow ??=
-            PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
-      }
-
-      // Carry-forward row: balance only, no description, no amounts.
-      if (balance != null && !hasDescription && !hasCreditDebit) {
-        return PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
-      }
-
-      // Description with running balance only (e.g. Salary); skip if a newer
-      // transaction row with credit/debit was already found below.
-      if (balance != null &&
-          hasDescription &&
-          !hasCreditDebit &&
-          fallbackTxnRow == null) {
-        return PerSourceBalance(amount: balance, sheetRowNumber: sheetRowNumber);
-      }
-
-      // Rows with no description but inherited credit/debit are skipped.
-    }
-
-    return fallbackTxnRow ?? fallbackAnyBalance;
+    return _SourceColumnIndices(
+      balanceIdx: balanceIdx,
+      creditIdx: creditIdx,
+      debitIdx: debitIdx,
+    );
   }
 
   /// Legacy helper: all sources from one global last dated row.
@@ -165,4 +253,28 @@ class SheetBalanceReader {
 
   static int sheetRowNumberForIndex(int rowIndex, int firstDataRowNumber) =>
       firstDataRowNumber + rowIndex;
+}
+
+class _SourceColumnIndices {
+  const _SourceColumnIndices({
+    required this.balanceIdx,
+    required this.creditIdx,
+    required this.debitIdx,
+  });
+
+  final int balanceIdx;
+  final int creditIdx;
+  final int debitIdx;
+}
+
+class _RowCellReading {
+  const _RowCellReading({
+    required this.balance,
+    required this.hasCreditDebit,
+    required this.hasDescription,
+  });
+
+  final double? balance;
+  final bool hasCreditDebit;
+  final bool hasDescription;
 }

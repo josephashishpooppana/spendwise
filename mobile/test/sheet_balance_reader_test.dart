@@ -94,7 +94,7 @@ void main() {
     test('cash balance ignores blank rows with inherited credit/debit', () {
       final rows = <List<Object?>>[
         ['Monday', 45290.0, 'Tea', null, null, 1000.0],
-        ['Tuesday', 45291.0, '', null, 40.0, 34905.50], // inherited debit, no desc
+        ['Tuesday', 45291.0, '', null, 40.0, 34905.50],
         ['Wednesday', 45292.0, 'Bus', null, 25.0, 34880.50],
       ];
 
@@ -107,14 +107,41 @@ void main() {
         sheetBalanceColumn: 'F',
       );
 
-      final perSource = SheetBalanceReader.perSourceFromSheet(
+      final reading = SheetBalanceReader.balanceForSource(
         rows: rows,
-        sources: const [cash],
+        source: cash,
         firstDataRowNumber: 3,
       );
 
-      expect(perSource['cash']!.amount, 34880.50);
-      expect(perSource['cash']!.sheetRowNumber, 5);
+      expect(reading!.amount, 34880.50);
+      expect(reading.sheetRowNumber, 5);
+    });
+
+    test('cash balance uses W/X/Y columns like Daily Expenses sheet', () {
+      final row = List<Object?>.filled(30, '');
+      row[0] = 'Saturday';
+      row[1] = 45295.0;
+      row[2] = 'Milk';
+      row[23] = 40.0; // X debit
+      row[24] = 34905.50; // Y balance
+
+      const cash = PaymentSourceModel(
+        id: 'cash',
+        name: 'Cash In Hand',
+        sourceTypeKey: 'CASH',
+        sheetCreditColumn: 'W',
+        sheetDebitColumn: 'X',
+        sheetBalanceColumn: 'Y',
+      );
+
+      final reading = SheetBalanceReader.balanceForSource(
+        rows: [row],
+        source: cash,
+        firstDataRowNumber: 3,
+      );
+
+      expect(reading!.amount, 34905.50);
+      expect(reading.sheetRowNumber, 3);
     });
   });
 }

@@ -143,6 +143,7 @@ class SheetImportService {
       int? minImportedSheetRow;
       int? maxImportedSheetRow;
       final toInsert = <TransactionModel>[];
+      final lastImportedSheetRowBySource = <String, int>{};
 
       for (final entry in parsed) {
         if (!replaceExisting && await db.transactionExists(entry.importId)) {
@@ -160,6 +161,11 @@ class SheetImportService {
 
         await _applyMetadataSourceType(entry, source, sources);
         source = sources.firstWhere((s) => s.id == source!.id);
+
+        final prevRow = lastImportedSheetRowBySource[source.id];
+        if (prevRow == null || entry.sheetRowNumber > prevRow) {
+          lastImportedSheetRowBySource[source.id] = entry.sheetRowNumber;
+        }
 
         final category = SheetParser.inferCategory(entry);
         final methodId = _resolveMethodId(entry, source, methods);
@@ -208,6 +214,7 @@ class SheetImportService {
         balanceNote = await _applyOpeningBalancesFromSheet(
           rows: rows,
           sources: sourcesForBalance,
+          lastImportedSheetRowBySource: lastImportedSheetRowBySource,
         );
       } else {
         await _recalculateBalancesFromTransactions();
@@ -409,19 +416,28 @@ class SheetImportService {
   Future<String> _applyOpeningBalancesFromSheet({
     required List<List<Object?>> rows,
     required List<PaymentSourceModel> sources,
+    Map<String, int> lastImportedSheetRowBySource = const {},
   }) async {
-    final perSource = SheetBalanceReader.perSourceFromSheet(
-      rows: rows,
-      sources: sources,
-    );
-    if (perSource.isEmpty) {
+    final readings = <String, PerSourceBalance>{};
+    for (final source in sources) {
+      final reading = SheetBalanceReader.balanceForSource(
+        rows: rows,
+        source: source,
+        preferSheetRowNumber: lastImportedSheetRowBySource[source.id],
+      );
+      if (reading != null) {
+        readings[source.id] = reading;
+      }
+    }
+
+    if (readings.isEmpty) {
       await _recalculateBalancesFromTransactions();
       return 'Could not read balances from the sheet; balances computed from imported transactions.';
     }
 
     var applied = 0;
     for (final source in sources) {
-      final reading = perSource[source.id];
+      final reading = readings[source.id];
       if (reading == null) continue;
       await db.updateSourceBalance(source.id, reading.amount);
       applied++;
@@ -434,12 +450,14 @@ class SheetImportService {
 
     final parts = <String>[];
     for (final source in sources) {
-      final reading = perSource[source.id];
+      final reading = readings[source.id];
       if (reading == null) continue;
       final label = source.sourceTypeKey == 'CREDIT_CARD'
           ? '${source.name} bill'
           : source.name;
-      parts.add('$label row ${reading.sheetRowNumber} ${reading.amount.toStringAsFixed(2)}');
+      parts.add(
+        '$label row ${reading.sheetRowNumber} ${reading.amount.toStringAsFixed(2)}',
+      );
     }
 
     return 'Opening balances (per account last row): ${parts.join(', ')}.';
