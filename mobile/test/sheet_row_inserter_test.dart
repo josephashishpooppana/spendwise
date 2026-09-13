@@ -67,6 +67,39 @@ void main() {
       expect(second, 6);
     });
 
+    test('today then yesterday need distinct targets when second is reserved', () {
+      final rows = <List<Object?>>[
+        ['Monday', DateTime(2026, 1, 1), 'Older'],
+      ];
+      final snapshot = rows.map((r) => List<Object?>.from(r)).toList();
+      final takenTargets = <int>{};
+
+      var target = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 5),
+        sheetRows: snapshot,
+      );
+      while (takenTargets.contains(target)) {
+        target++;
+      }
+      takenTargets.add(target);
+      SheetRowInserter.insertPlaceholderRowAt(
+        snapshot,
+        target,
+        txnDate: DateTime(2026, 1, 5),
+      );
+
+      var target2 = SheetRowInserter.targetInsertRow(
+        txnDate: DateTime(2026, 1, 4),
+        sheetRows: snapshot,
+      );
+      while (takenTargets.contains(target2)) {
+        target2++;
+      }
+
+      expect(target, 4);
+      expect(target2, 5);
+    });
+
     test('yesterday then today get distinct rows when planned in order', () {
       final rows = <List<Object?>>[
         ['Monday', DateTime(2026, 1, 1), 'Older'],

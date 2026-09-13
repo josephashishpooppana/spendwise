@@ -142,6 +142,15 @@ class SheetExportPlanner {
     }
 
     parentTransactionId ??= txn.cashbackFromExpenseId;
+    if (parentTransactionId == null &&
+        txn.type == TransactionType.income &&
+        txn.notes != null &&
+        txn.notes!.startsWith('paired:')) {
+      final expenseId = txn.notes!.substring('paired:'.length).trim();
+      if (expenseId.isNotEmpty) {
+        parentTransactionId = expenseId;
+      }
+    }
 
     return PendingSheetRow(
       txn: txn,

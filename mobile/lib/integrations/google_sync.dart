@@ -591,9 +591,17 @@ class SyncService {
               .map((r) => List<Object?>.from(r))
               .toList();
           final parentTargets = <String, int>{};
+          final takenTargets = <int>{};
           final planned = <_PlannedInsert>[];
 
-          for (final p in toAppend) {
+          final sortedAppends = toAppend.toList()
+            ..sort((a, b) {
+              final byTime = a.txn.timestamp.compareTo(b.txn.timestamp);
+              if (byTime != 0) return byTime;
+              return a.txn.id.compareTo(b.txn.id);
+            });
+
+          for (final p in sortedAppends) {
             int target;
             if (p.parentTransactionId != null &&
                 parentTargets.containsKey(p.parentTransactionId)) {
@@ -604,6 +612,11 @@ class SyncService {
                 sheetRows: snapshot,
               );
             }
+            while (takenTargets.contains(target)) {
+              target++;
+            }
+            takenTargets.add(target);
+
             planned.add(_PlannedInsert(row: p, targetRow: target));
             parentTargets[p.txn.id] = target;
             SheetRowInserter.insertPlaceholderRowAt(
@@ -859,6 +872,15 @@ class SyncService {
             metadataStartColumnIndex: resolvedMetadataStart,
             amountSource: p.source,
             clearAmountColumn: p.previousAmountColumn,
+          ),
+        );
+        updateRanges.addAll(
+          SheetRowBuilder.buildFormulaRangesForRow(
+            sheetTitle: sheetTitle,
+            rowNumber: rowNumber,
+            mappedSources: mappedSources,
+            totalInBankColumn: resolvedTotalInBank,
+            totalBalanceColumn: resolvedTotalBalance,
           ),
         );
         registry.markSynced(

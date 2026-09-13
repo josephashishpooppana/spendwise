@@ -241,27 +241,45 @@ class SheetRowBuilder {
     return null;
   }
 
-  static List<sheets.ValueRange> buildInsertRanges({
+  /// Clears credit/debit cells copied by row insert (inheritFromBefore).
+  static List<sheets.ValueRange> buildClearInheritedAmountRanges({
     required String sheetTitle,
     required int rowNumber,
-    required List<Object?> fullRow,
-    required String amountColumn,
-    required int metadataStartColumnIndex,
-    required PaymentSourceModel amountSource,
+    required List<PaymentSourceModel> mappedSources,
+    required String keepAmountColumn,
+  }) {
+    final r = '$rowNumber';
+    final ranges = <sheets.ValueRange>[];
+    final seen = <String>{};
+    for (final source in mappedSources) {
+      if (!source.hasSheetMapping) continue;
+      for (final col in [source.sheetCreditColumn, source.sheetDebitColumn]) {
+        if (col == null || col.isEmpty || col == keepAmountColumn) continue;
+        if (!seen.add(col)) continue;
+        ranges.add(
+          sheets.ValueRange(
+            range: formatSheetRange(sheetTitle, '$col$r'),
+            values: [
+              [''],
+            ],
+          ),
+        );
+      }
+    }
+    return ranges;
+  }
+
+  /// Balance/bill + Total In Bank + Total Balance formulas for one data row.
+  static List<sheets.ValueRange> buildFormulaRangesForRow({
+    required String sheetTitle,
+    required int rowNumber,
     required List<PaymentSourceModel> mappedSources,
     required String totalInBankColumn,
     required String totalBalanceColumn,
   }) {
-    final ranges = buildUpdateRanges(
-      sheetTitle: sheetTitle,
-      rowNumber: rowNumber,
-      fullRow: fullRow,
-      amountColumn: amountColumn,
-      metadataStartColumnIndex: metadataStartColumnIndex,
-      amountSource: amountSource,
-    );
-
     final r = '$rowNumber';
+    final ranges = <sheets.ValueRange>[];
+
     for (final source in mappedSources) {
       if (!source.hasSheetMapping) continue;
       final formula = SheetFormulaBuilder.balanceFormula(
@@ -309,6 +327,44 @@ class SheetRowBuilder {
         ),
       );
     }
+
+    return ranges;
+  }
+
+  static List<sheets.ValueRange> buildInsertRanges({
+    required String sheetTitle,
+    required int rowNumber,
+    required List<Object?> fullRow,
+    required String amountColumn,
+    required int metadataStartColumnIndex,
+    required PaymentSourceModel amountSource,
+    required List<PaymentSourceModel> mappedSources,
+    required String totalInBankColumn,
+    required String totalBalanceColumn,
+  }) {
+    final ranges = <sheets.ValueRange>[
+      ...buildClearInheritedAmountRanges(
+        sheetTitle: sheetTitle,
+        rowNumber: rowNumber,
+        mappedSources: mappedSources,
+        keepAmountColumn: amountColumn,
+      ),
+      ...buildUpdateRanges(
+        sheetTitle: sheetTitle,
+        rowNumber: rowNumber,
+        fullRow: fullRow,
+        amountColumn: amountColumn,
+        metadataStartColumnIndex: metadataStartColumnIndex,
+        amountSource: amountSource,
+      ),
+      ...buildFormulaRangesForRow(
+        sheetTitle: sheetTitle,
+        rowNumber: rowNumber,
+        mappedSources: mappedSources,
+        totalInBankColumn: totalInBankColumn,
+        totalBalanceColumn: totalBalanceColumn,
+      ),
+    ];
 
     return ranges;
   }
